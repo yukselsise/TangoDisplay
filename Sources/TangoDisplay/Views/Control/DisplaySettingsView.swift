@@ -4,6 +4,16 @@ struct DisplaySettingsView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var settings: AppSettings
 
+    @State private var draftCortinaLabel: String = ""
+    @State private var draftNextUpLabel: String = ""
+    @State private var draftIdleMessage: String = ""
+
+    private var hasUnsavedLabelChanges: Bool {
+        draftCortinaLabel != settings.cortinaLabel ||
+        draftNextUpLabel  != settings.nextUpLabel  ||
+        draftIdleMessage  != settings.idleMessage
+    }
+
     var body: some View {
         Form {
             Section {
@@ -46,9 +56,24 @@ struct DisplaySettingsView: View {
             }
 
             Section {
-                labelRow("Cortina",       binding: $settings.cortinaLabel)
-                labelRow("Coming up",     binding: $settings.nextUpLabel)
-                labelRow("Idle message",  binding: $settings.idleMessage)
+                labelRow("Cortina",       binding: $draftCortinaLabel)
+                labelRow("Coming up",     binding: $draftNextUpLabel)
+                labelRow("Idle message",  binding: $draftIdleMessage)
+                HStack {
+                    if hasUnsavedLabelChanges {
+                        Text("● Unsaved changes")
+                            .font(.caption)
+                            .foregroundColor(ControlTheme.accent)
+                    }
+                    Spacer()
+                    Button("Save") {
+                        settings.cortinaLabel = draftCortinaLabel
+                        settings.nextUpLabel  = draftNextUpLabel
+                        settings.idleMessage  = draftIdleMessage
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!hasUnsavedLabelChanges)
+                }
             } header: {
                 Text("Display Labels")
                     .foregroundColor(ControlTheme.accent)
@@ -56,7 +81,12 @@ struct DisplaySettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .onAppear { appState.refreshDisplayList() }
+        .onAppear {
+            draftCortinaLabel = settings.cortinaLabel
+            draftNextUpLabel  = settings.nextUpLabel
+            draftIdleMessage  = settings.idleMessage
+            appState.refreshDisplayList()
+        }
     }
 
     private func displayLabel(_ d: DisplayInfo) -> String {

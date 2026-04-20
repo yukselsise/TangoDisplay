@@ -3,7 +3,7 @@ import TangoDisplayCore
 
 struct IdleView: View {
     let mode: DisplayMode
-    let settings: AppSettings
+    @ObservedObject var settings: AppSettings
     let profile: AppearanceProfile
 
     var body: some View {

@@ -4,7 +4,7 @@ import TangoDisplayCore
 struct CortinaView: View {
     let state: DisplayState
     let profile: AppearanceProfile
-    let settings: AppSettings
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         VStack(spacing: 32) {
