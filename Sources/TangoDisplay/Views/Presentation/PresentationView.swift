@@ -83,9 +83,10 @@ struct PresentationView: View {
             // Track counter — in an overlay so it is always in front by
             // SwiftUI's layout contract, regardless of background image
             // rendering. Toggle takes effect instantly; shown only when .playing
-            // and the active source supports playlist enumeration.
+            // and a position is available (always true for dance tracks).
+            // Shows "Track N of M" when the full playlist is known (Music.app,
+            // Embrace), or "Track N" from history alone (Swinsian).
             if settings.showTrackCounter,
-               appState.activeSourceSupportsPlaylist,
                appState.displayState.mode == .playing,
                let pos = appState.displayState.tandaPosition {
                 Text(tandaLabel(pos))

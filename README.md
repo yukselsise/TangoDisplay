@@ -131,7 +131,8 @@ Key design decisions:
 ## Changelog
 
 ### v2.0.0
-- **New (Swinsian):** Swinsian now supports next-track look-ahead via the playback queue. The "Coming Up" next-tanda preview is now shown during cortinas when using Swinsian, bringing it to full parity with Music.app and Embrace for cortina previews. Tanda position counting (Track X of X) continues to use track history — Swinsian's queue starts at the current track so backwards context is unavailable.
+- **New (Swinsian):** Swinsian now supports next-track look-ahead via the playback queue. The "Coming Up" next-tanda preview is now shown during cortinas when using Swinsian, bringing it to full parity with Music.app and Embrace for cortina previews.
+- **New (Swinsian):** Track counter is now shown for Swinsian. It displays the position within the current tanda (e.g. "Track 2") using track history. The total (e.g. "of 4") remains unavailable — Swinsian's queue starts at the current track so backwards context is unavailable.
 - **New:** Singer during cortina. Enable **Show singer during cortina** (in Appearance › Fonts, below the Singer row) to display the vocalist name in the cortina "Coming Up" preview. Requires **Include comments as singer** to also be enabled.
 - **Improvement:** Track comments (singer names) are now fetched in bulk during playlist enumeration for Music.app and Embrace, so the vocalist line is available immediately on track change without a secondary async call.
 
@@ -143,7 +144,7 @@ Key design decisions:
 
 ### v1.7.0
 - **New:** Album artwork is now shown on the dancer screen. Enable **Display album artwork** in the Appearance tab. Artwork is fetched from the current track for all three player sources (Music.app, Swinsian, and Embrace). Four controls — **Opacity**, **Scale**, **Horizontal offset**, and **Vertical offset** — let you position and blend it exactly as you want. Artwork fades in and out with track transitions.
-- **Change:** The track counter (Track X of X) is now hidden when using Swinsian (which doesn't support playlist enumeration) and when the player is paused.
+- **Change:** The track counter is now hidden when the player is paused. When using Swinsian it showed only a position without a total — this was improved in v2.0.0.
 
 ### v1.6.0
 - **New:** Year is now an optional display field. Enable **Show Year** in the Appearance tab to show the recording year on the dancer screen. Year has its own font and color controls. Supported for all three player sources — Music.app, Swinsian, and Embrace. Music.app and Embrace also show the next track's year in the cortina "Coming Up" preview.

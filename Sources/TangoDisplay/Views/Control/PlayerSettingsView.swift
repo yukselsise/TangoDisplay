@@ -53,7 +53,7 @@ struct PlayerSettingsView: View {
                         .foregroundColor(.green)
                 }
                 Label {
-                    Text("Tanda position counting (track 1 of 4) uses track history only — Swinsian's queue starts at the current track so backwards context is unavailable.")
+                    Text("Track counter shows position within the current tanda (e.g. Track 2). The total (e.g. of 4) is unavailable — Swinsian's queue starts at the current track so backwards context is unavailable.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } icon: {
