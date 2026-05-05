@@ -87,10 +87,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     }
 
     @objc private func handleEngineConfigChange() {
-        try? audioEngine.start()
-        if isActivePlaying {
-            seekTo(elapsed)
-            playerNode.play()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            try? self.audioEngine.start()
+            guard self.audioFile != nil else { return }
+            self.seekTo(self.elapsed)
+            if self.isActivePlaying { self.playerNode.play() }
         }
     }
 

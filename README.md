@@ -46,7 +46,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.0.1-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.0.2-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -132,6 +132,9 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.0.2
+- **Fix (Built-In Player):** AIFF and Apple Lossless tracks no longer play silently when they are the first tracks in a setlist. Scheduling a PCM-format file triggers an `AVAudioEngineConfigurationChange` notification on AVAudioEngine's internal thread; the handler now dispatches to the main thread so it always runs after `isActivePlaying` is set, correctly rescheduling audio and resuming playback.
 
 ### v3.0.1
 - **Fix (Built-In Player):** iTunNORM replay-gain tags are no longer shown as the singer/comment line. These tags are embedded by iTunes/Music.app as a hex string in the Comments field; the built-in player now strips them so they do not appear on the dancer screen.
