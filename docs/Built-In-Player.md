@@ -37,6 +37,18 @@ To insert mid-list, drag onto a specific row to place the new track before it ra
 
 **Supported formats:** MP3, M4A (AAC), AIFF, WAV, FLAC, CAF, Opus.
 
+#### Duplicate Track Protection
+
+When **Duplicate track protection** is enabled in **Player Settings**, dropping a track that is already in the setlist (played or unplayed) shows an alert:
+
+> *This track already exists in this set. Add anyway?*
+
+- **Add** — adds the duplicate.
+- **Don't Add** — skips it.
+- **Remember for this session** — check this before clicking either button to lock in your choice. Subsequent duplicates are then added or skipped silently for the rest of the session. The remembered choice is cleared when you click **Clear Setlist**.
+
+Non-duplicate tracks in the same drag operation are always added immediately, regardless of this setting.
+
 > **Screenshot placeholder:** setlist view with several tracks showing mixed state (queued, playing, played)
 
 ### Track Rows
@@ -229,6 +241,8 @@ These options appear only when **Built-in Player** is selected.
 **Main output** — the audio device to use for playback. Defaults to the macOS system output.
 
 **Cortina fade** — duration of the volume fade used by Fade & Stop and Fade & Continue (1–15 seconds, in 0.5-second steps). Default: 5 seconds.
+
+**Duplicate track protection** — when enabled, dropping a track that already exists in the setlist shows a confirmation alert before adding it. Includes a **Remember for this session** checkbox that silences the prompt for the rest of the session (until the setlist is cleared). Off by default.
 
 **Mark as played** — controls when a track receives its played stamp:
 

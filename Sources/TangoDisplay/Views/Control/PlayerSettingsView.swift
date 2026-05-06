@@ -108,6 +108,10 @@ struct PlayerSettingsView: View {
                     Text("Controls when a track is marked as played. Once marked, resuming playback skips to the next track.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    Toggle("Duplicate track protection", isOn: $settings.duplicateTrackProtection)
+                    Text("Warns before adding a track that is already in the setlist.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 } header: {
                     Text("Built-in Player")
                         .foregroundColor(ControlTheme.accent)

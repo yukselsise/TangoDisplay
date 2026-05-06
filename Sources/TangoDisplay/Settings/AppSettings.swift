@@ -112,6 +112,9 @@ final class AppSettings: ObservableObject {
 
     // MARK: - Built-in player track info
 
+    @Published var duplicateTrackProtection: Bool {
+        didSet { UserDefaults.standard.set(duplicateTrackProtection, forKey: kPrefix + "duplicateTrackProtection") }
+    }
     @Published var showYear: Bool {
         didSet { UserDefaults.standard.set(showYear, forKey: kPrefix + "showYear") }
     }
@@ -186,6 +189,8 @@ final class AppSettings: ObservableObject {
             .flatMap { $0 as? Bool } ?? false
         let savedSeconds = ud.integer(forKey: kPrefix + "markAsPlayedAfterSeconds")
         markAsPlayedAfterSeconds = savedSeconds > 0 ? savedSeconds : 10
+        duplicateTrackProtection = ud.object(forKey: kPrefix + "duplicateTrackProtection")
+            .flatMap { $0 as? Bool } ?? false
         showYear = ud.object(forKey: kPrefix + "showYear").flatMap { $0 as? Bool } ?? true
         showTime = ud.object(forKey: kPrefix + "showTime").flatMap { $0 as? Bool } ?? true
         showComments = ud.object(forKey: kPrefix + "showComments").flatMap { $0 as? Bool } ?? false

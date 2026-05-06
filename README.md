@@ -8,7 +8,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 
 ## Features
 
-- **Built-In Player** — native audio player: build a setlist by dragging tracks from Finder, Music.app, or Swinsian; full playback controls with accidental-stop protection; Fade & Stop / Fade & Continue cortina transitions; 5-band EQ (±12 dB); audio output routing to any macOS device; setlist persists across restarts. No Music.app required.
+- **Built-In Player** — native audio player: build a setlist by dragging tracks from Finder, Music.app, or Swinsian; full playback controls with accidental-stop protection; Fade & Stop / Fade & Continue cortina transitions; 5-band EQ (±12 dB); audio output routing to any macOS device; optional duplicate track protection; setlist persists across restarts. No Music.app required.
 - **Live track display** — artist, title, genre/label, year, and track counter (e.g. Track 2 of 4) on the dancer screen
 - **Cortina detection** — configurable allowlist (cortina genres) and denylist (dance genres) with partial matching; shows a "CORTINA" overlay automatically. Optional per-entry **display label** lets you show a clean label (e.g. `Vals`) instead of the raw genre tag (e.g. `Tango: Vals`)
 - **Coming-up preview** — displays the next tanda's genre and artist before it starts
@@ -47,7 +47,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.3.0-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.4.0-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -133,6 +133,9 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.4.0
+- **New (Built-In Player):** Duplicate track protection. Enable **Duplicate track protection** in **Settings › Player › Built-in Player** to be warned before a track that already exists in the setlist is added. A native alert asks "Add anyway?" with **Add** and **Don't Add** buttons. A **Remember for this session** checkbox lets you lock in your choice — future duplicates are then added or skipped silently until the setlist is cleared, at which point the prompt reappears.
 
 ### v3.3.0
 - **Fix (JRiver):** Artist tag now correctly shows the track Artist instead of Album Artist. Previously the poller substituted Album Artist into the Artist field whenever it was present, causing it to display as the Artist on screen.

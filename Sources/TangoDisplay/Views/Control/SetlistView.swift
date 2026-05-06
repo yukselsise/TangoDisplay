@@ -90,10 +90,59 @@ struct SetlistView: View {
         .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
             Task {
                 let urls = await loadURLs(from: providers)
-                setlist.addURLs(urls)
+                handleIncomingURLs(urls, anchorID: nil)
             }
             return true
         }
+    }
+
+    // MARK: - Drop handling
+
+    private func handleIncomingURLs(_ urls: [URL], anchorID: UUID?) {
+        guard settings.duplicateTrackProtection else {
+            setlist.insertURLs(urls, before: anchorID)
+            return
+        }
+
+        let existingURLs = Set(setlist.entries.map(\.fileURL))
+        var fresh: [URL] = []
+        var duplicates: [URL] = []
+        for url in urls {
+            if existingURLs.contains(url) { duplicates.append(url) } else { fresh.append(url) }
+        }
+
+        if !fresh.isEmpty { setlist.insertURLs(fresh, before: anchorID) }
+        guard !duplicates.isEmpty else { return }
+
+        switch setlist.duplicateSessionDecision {
+        case .alwaysAdd:
+            setlist.insertURLs(duplicates, before: anchorID)
+        case .neverAdd:
+            break
+        case nil:
+            let (shouldAdd, remember) = promptForDuplicates()
+            if remember { setlist.setDuplicateSessionDecision(shouldAdd ? .alwaysAdd : .neverAdd) }
+            if shouldAdd { setlist.insertURLs(duplicates, before: anchorID) }
+        }
+    }
+
+    private func promptForDuplicates() -> (shouldAdd: Bool, remember: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "Track Already in Setlist"
+        alert.informativeText = "This track already exists in this set. Add anyway?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Don't Add")
+
+        let checkbox = NSButton(checkboxWithTitle: "Remember for this session", target: nil, action: nil)
+        checkbox.sizeToFit()
+        alert.accessoryView = checkbox
+
+        let result = alert.runModal()
+        return (
+            shouldAdd: result == .alertFirstButtonReturn,
+            remember: checkbox.state == .on
+        )
     }
 
     // MARK: - Track list
@@ -170,7 +219,7 @@ struct SetlistView: View {
                     : nil
                 Task {
                     let urls = await loadURLs(from: providers)
-                    setlist.insertURLs(urls, before: anchorID)
+                    handleIncomingURLs(urls, anchorID: anchorID)
                 }
             }
         }

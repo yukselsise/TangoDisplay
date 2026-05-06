@@ -24,9 +24,16 @@ struct SetlistEntry: Identifiable, Codable {
     }
 }
 
+enum DuplicateSessionDecision { case alwaysAdd, neverAdd }
+
 final class SetlistManager: ObservableObject {
     @Published private(set) var entries: [SetlistEntry] = []
     @Published var stopAfterEntryID: UUID?
+    private(set) var duplicateSessionDecision: DuplicateSessionDecision? = nil
+
+    func setDuplicateSessionDecision(_ decision: DuplicateSessionDecision?) {
+        duplicateSessionDecision = decision
+    }
 
     var totalPlaylistDuration: TimeInterval {
         entries.compactMap { $0.duration }.reduce(0, +)
@@ -96,6 +103,7 @@ final class SetlistManager: ObservableObject {
 
     func clear() {
         stopAfterEntryID = nil
+        duplicateSessionDecision = nil
         entries.removeAll()
         save()
     }
