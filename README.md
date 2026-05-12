@@ -48,7 +48,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.8.0-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.10.0-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -134,6 +134,10 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.10.0
+- **Improvement (Built-In Player):** Auto-gap quick access. When auto-gap is enabled, a new **Auto-gap** button (timer icon) appears in the Setlist toolbar alongside EQ and Balance, opening a slider popover to adjust the gap duration instantly — no need to open Settings mid-performance. The button is disabled when auto-gap is off. The setlist footer now shows the live gap duration (e.g. "Auto-gap: 2.0s") instead of a plain "Auto-gap: on", updating in real time as you move the slider.
+- **Confirmation:** Changing the gap duration while a track is playing takes effect for the very next gap. The duration is read at the moment the current track ends, so any adjustment made during playback applies to the upcoming silence preroll.
 
 ### v3.9.0
 - **New: Last Tanda** — Signal the final tanda of your milonga to the audience. A **Last Tanda** toggle in the **Live** screen activates the label on both the cortina (coming-up section) and every dance track in the tanda — works with any player source. The label text, colour, and font are configured in **Appearance Settings › Last Tanda**; position is orderable in the **Text Order** drag list for both Dance Tracks and Cortinas — Coming Up. When using the Built-in Player, right-click any cortina in the setlist and select **Mark as Last Tanda** to pre-schedule activation — TangoDisplay activates the label automatically when that cortina starts and clears it when the next cortina begins. A red flag icon appears on the marked setlist row.

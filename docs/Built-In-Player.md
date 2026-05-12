@@ -167,7 +167,7 @@ A status bar at the bottom of the track list shows:
 
 - **Total duration** — the combined length of all remaining unplayed tracks
 - **Estimated end time** — a projected clock time when the setlist will finish, calculated from the current elapsed position, all remaining queued tracks, and any stop-after marker (e.g. "Ends ~23:45")
-- **Auto-gap status** — when auto-gap is enabled, a small green dot and "Auto-gap: on" label appear. The dot turns grey and the label reads "Auto-gap: off" when the feature is disabled.
+- **Auto-gap status** — when auto-gap is enabled, a small green dot and the live gap duration (e.g. "Auto-gap: 2.0s") appear. The dot turns grey and the label reads "Auto-gap: off" when the feature is disabled. The duration updates in real time as you adjust the slider.
 - **Auto-fade status** — when auto-fade is enabled, a small orange dot and "Auto-fade: on" label appear alongside the auto-gap indicator. The dot turns grey and the label reads "Auto-fade: off" when the feature is disabled.
 
 ---
@@ -198,7 +198,8 @@ Three places in the UI reflect auto-gap state:
 
 | Indicator | What it means |
 |---|---|
-| **Setlist footer dot** | Green dot + "Auto-gap: on" = feature active. Grey dot + "Auto-gap: off" = feature disabled. |
+| **Setlist footer dot** | Green dot + "Auto-gap: 4.0s" (live duration) = feature active. Grey dot + "Auto-gap: off" = feature disabled. |
+| **Timer toolbar button** | Opens the Auto-gap popover for instant duration changes. Disabled when auto-gap is off. |
 | **Filled green wave icon** on a track row | Auto-gap silence was successfully scheduled before this track |
 | **Outlined grey wave icon** on a track row | Auto-gap was skipped or ignored for this track (first track with "Skip gap before first track" on, or per-track override active) |
 | *(no icon)* | Auto-gap not applicable to this track |
@@ -274,6 +275,20 @@ Click the **Balance** button (dial icon) in the Setlist toolbar to open the bala
 - Click **Centre** to snap back to balanced (0).
 
 The balance setting persists across app restarts. The Balance button is disabled when the built-in player is not active.
+
+---
+
+## Auto-Gap Quick Access
+
+When auto-gap is enabled, a **timer icon button** appears in the Setlist toolbar alongside EQ and Balance. Click it to open a popover with a duration slider — the same 0.5–5 s range as the full Settings panel, but reachable in one click during a performance.
+
+The button is **disabled** when auto-gap is off (enable it first in **Settings › Player › Auto-gap**).
+
+### Changing the gap mid-performance
+
+You can adjust the duration while a track is playing. The new value takes effect for the very next gap: the gap duration is read at the moment the current track ends, so any change you make during playback applies to the upcoming silence preroll. The setlist footer updates to reflect the new value in real time.
+
+> **Example:** Global gap is 4 s. While Track A plays, open the popover and drag to 2 s. The gap before Track B will be 2 s. Drag back to 4 s before Track C ends and subsequent gaps return to 4 s.
 
 ---
 

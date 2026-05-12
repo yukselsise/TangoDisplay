@@ -36,6 +36,7 @@ struct SetlistView: View {
     @State private var exportErrorMessage = ""
     @State private var showEQPopover = false
     @State private var showBalancePopover = false
+    @State private var showAutoGapPopover = false
     @State private var scrollTrigger: UUID? = nil
     @State private var showLastTandaWarning = false
 
@@ -242,6 +243,13 @@ struct SetlistView: View {
                     .disabled(!isPlayerActive)
                     .popover(isPresented: $showBalancePopover) {
                         BalanceView().environmentObject(settings)
+                    }
+                    Button { showAutoGapPopover.toggle() } label: {
+                        Label("Auto-gap", systemImage: "timer")
+                    }
+                    .disabled(!settings.autoGapEnabled)
+                    .popover(isPresented: $showAutoGapPopover) {
+                        AutoGapPopoverView().environmentObject(settings)
                     }
                 }
             }
@@ -465,7 +473,9 @@ private struct StatusBarView: View {
                     Circle()
                         .fill(settings.autoGapEnabled ? Color.green : Color.secondary)
                         .frame(width: 6, height: 6)
-                    Text("Auto-gap: \(settings.autoGapEnabled ? "on" : "off")")
+                    Text(settings.autoGapEnabled
+                        ? "Auto-gap: \(settings.autoGapDuration, specifier: "%.1f")s"
+                        : "Auto-gap: off")
                 }
                 .font(.system(size: 11))
                 .foregroundColor(settings.autoGapEnabled ? .primary : .secondary)
