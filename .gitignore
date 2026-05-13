@@ -4,8 +4,9 @@
 *.xcodeproj
 *.xcworkspace
 
-# Built app bundle (release artifact, distributed via GitHub Releases)
+# Built app bundle and release zips (distributed via GitHub Releases)
 TangoDisplay.app/
+TangoDisplay-v*.zip
 
 # macOS metadata
 .DS_Store
