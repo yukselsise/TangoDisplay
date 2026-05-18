@@ -159,6 +159,37 @@ struct SetlistView: View {
         return setlist.entries.first(where: { $0.state == .queued })?.id
     }
 
+    @ViewBuilder
+    private func rowView(for entry: SetlistEntry, wouldSkipAutoGap: Bool) -> some View {
+        SetlistRowView(
+            entry: entry,
+            isStopAfter: entry.id == setlist.stopAfterEntryID,
+            isActivelyPlaying: activeEntryID == entry.id && isPlayerActive,
+            isNextToPlay: entry.id == nextToPlayID,
+            showYear: settings.showYear,
+            showTime: settings.showTime,
+            showComments: settings.showComments,
+            showAlbumArtist: settings.showAlbumArtist,
+            wouldSkipAutoGap: wouldSkipAutoGap,
+            autoFadeCortinasEnabled: settings.autoFadeCortinasEnabled,
+            isLastTanda: entry.isLastTanda,
+            genreColorsEnabled: settings.genreColorsEnabled,
+            genreColorRules: settings.genreColorRules,
+            player: activeEntryID == entry.id && isPlayerActive ? player : nil
+        )
+        .tag(entry.id)
+        .moveDisabled(entry.state == .playing)
+        // NSViewRepresentable overlay handles double-click without adding any
+        // SwiftUI gesture recognizer — keeping NSTableView's primary click
+        // handler free to process single/multi-selection.
+        .overlay(DoubleClickOverlay { player.jumpTo(entry) })
+        .contextMenu {
+            let targets: Set<UUID> = selectedIDs.contains(entry.id)
+                ? selectedIDs : [entry.id]
+            rowContextMenu(entry: entry, targets: targets)
+        }
+    }
+
     private var trackList: some View {
         let firstID = setlist.entries.first?.id
         let nonePlayedYet = !setlist.entries.contains(where: { $0.state == .played })
@@ -166,32 +197,7 @@ struct SetlistView: View {
         return List(selection: $selectedIDs) {
             ForEach(setlist.entries) { entry in
                 let wouldSkipAutoGap = isIgnoringFirstTrack && nonePlayedYet && entry.state == .queued && entry.id == firstID
-                SetlistRowView(
-                    entry: entry,
-                    isStopAfter: entry.id == setlist.stopAfterEntryID,
-                    isActivelyPlaying: activeEntryID == entry.id && isPlayerActive,
-                    isNextToPlay: entry.id == nextToPlayID,
-                    showYear: settings.showYear,
-                    showTime: settings.showTime,
-                    showComments: settings.showComments,
-                    showAlbumArtist: settings.showAlbumArtist,
-                    wouldSkipAutoGap: wouldSkipAutoGap,
-                    autoFadeCortinasEnabled: settings.autoFadeCortinasEnabled,
-                    isLastTanda: entry.isLastTanda,
-                    genreColorsEnabled: settings.genreColorsEnabled,
-                    genreColorRules: settings.genreColorRules
-                )
-                .tag(entry.id)
-                .moveDisabled(entry.state == .playing)
-                // NSViewRepresentable overlay handles double-click without adding any
-                // SwiftUI gesture recognizer — keeping NSTableView's primary click
-                // handler free to process single/multi-selection.
-                .overlay(DoubleClickOverlay { player.jumpTo(entry) })
-                .contextMenu {
-                    let targets: Set<UUID> = selectedIDs.contains(entry.id)
-                        ? selectedIDs : [entry.id]
-                    rowContextMenu(entry: entry, targets: targets)
-                }
+                rowView(for: entry, wouldSkipAutoGap: wouldSkipAutoGap)
             }
             .onMove { source, dest in
                 setlist.move(from: source, to: dest)
@@ -646,80 +652,91 @@ struct SetlistRowView: View {
     var isLastTanda: Bool = false
     var genreColorsEnabled: Bool = false
     var genreColorRules: [GenreColorRule] = []
+    var player: LocalPlayerSource? = nil
 
     private var isCurrent: Bool { entry.state == .playing || entry.state == .paused || isActivelyPlaying }
     private var isCurrentPlaying: Bool { entry.state == .playing || isActivelyPlaying }
 
     var body: some View {
-        HStack(spacing: 8) {
-            stateIndicator
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                stateIndicator
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.track.title)
-                    .font(.system(size: 13))
-                    .fontWeight(entry.state == .queued ? .medium : .regular)
-                    .lineLimit(1)
-                    .foregroundColor(entry.state == .played && !isActivelyPlaying ? .secondary : .primary)
-                Text(entry.track.artist + (showYear ? (entry.track.year.map { " · \($0)" } ?? "") : ""))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                let extraParts = [
-                    showComments ? entry.track.comment : nil,
-                    showAlbumArtist ? entry.track.albumArtist : nil
-                ].compactMap { $0 }.filter { !$0.isEmpty }
-                if !extraParts.isEmpty {
-                    Text(extraParts.joined(separator: " · "))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.track.title)
+                        .font(.system(size: 13))
+                        .fontWeight(entry.state == .queued ? .medium : .regular)
+                        .lineLimit(1)
+                        .foregroundColor(entry.state == .played && !isActivelyPlaying ? .secondary : .primary)
+                    Text(entry.track.artist + (showYear ? (entry.track.year.map { " · \($0)" } ?? "") : ""))
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
+                    let extraParts = [
+                        showComments ? entry.track.comment : nil,
+                        showAlbumArtist ? entry.track.albumArtist : nil
+                    ].compactMap { $0 }.filter { !$0.isEmpty }
+                    if !extraParts.isEmpty {
+                        Text(extraParts.joined(separator: " · "))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if showTime, let dur = entry.duration {
+                    Text(setlistFormatDuration(dur))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+
+                if !entry.track.genre.isEmpty {
+                    Text(entry.track.genre)
+                        .font(.system(size: 10))
+                        .foregroundColor(genreTagColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(genreTagColor.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+
+                if isStopAfter {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                }
+                if entry.autoGapApplied {
+                    Image(systemName: "wave.3.left.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.green)
+                } else if entry.ignoresAutoGap || entry.autoGapSkipped || wouldSkipAutoGap {
+                    Image(systemName: "wave.3.left.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                if autoFadeCortinasEnabled && entry.ignoresAutoFade {
+                    Image(systemName: "speaker.slash")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                }
+                if isLastTanda {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
                 }
             }
+            .padding(.top, 3)
+            .padding(.bottom, isCurrent && player != nil ? 2 : 3)
 
-            Spacer(minLength: 4)
-
-            if showTime, let dur = entry.duration {
-                Text(setlistFormatDuration(dur))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-
-            if !entry.track.genre.isEmpty {
-                Text(entry.track.genre)
-                    .font(.system(size: 10))
-                    .foregroundColor(genreTagColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(genreTagColor.opacity(0.15))
-                    .clipShape(Capsule())
-            }
-
-            if isStopAfter {
-                Image(systemName: "stop.circle")
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-            }
-            if entry.autoGapApplied {
-                Image(systemName: "wave.3.left.circle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(.green)
-            } else if entry.ignoresAutoGap || entry.autoGapSkipped || wouldSkipAutoGap {
-                Image(systemName: "wave.3.left.circle")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            if autoFadeCortinasEnabled && entry.ignoresAutoFade {
-                Image(systemName: "speaker.slash")
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-            }
-            if isLastTanda {
-                Image(systemName: "flag.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(.red)
+            if isCurrent, let player = player {
+                RowProgressBarView(player: player, entry: entry)
+                    .padding(.leading, 22)
+                    .padding(.bottom, 5)
             }
         }
-        .padding(.vertical, 3)
+        .contentShape(Rectangle())
         .listRowBackground(rowBackground)
     }
 
@@ -766,5 +783,77 @@ struct SetlistRowView: View {
         }
         .font(.system(size: 11))
         .frame(width: 14)
+    }
+}
+
+// MARK: - In-row progress bar
+
+private struct RowProgressBarView: View {
+    @ObservedObject var player: LocalPlayerSource
+    @EnvironmentObject var appState: AppState
+    let entry: SetlistEntry
+
+    var body: some View {
+        let barColor: Color = entry.state == .paused ? .orange : ControlTheme.accent
+        VStack(spacing: 2) {
+            GeometryReader { geo in
+                let progress = player.duration > 0
+                    ? player.elapsed / max(player.duration, 1)
+                    : 0
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(height: 3)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(barColor)
+                        .frame(width: geo.size.width * progress, height: 3)
+                    let shouldShowPlayed = !appState.settings.markAsPlayedAfterCompletion
+                        && player.duration > 0
+                        && !player.isCurrentEntryMarkedAsPlayed
+                    let playedFraction = min(1.0,
+                        Double(appState.settings.markAsPlayedAfterSeconds) / player.duration)
+                    Rectangle()
+                        .fill(ControlTheme.accent.opacity(0.7))
+                        .frame(width: 2, height: 8)
+                        .position(x: playedFraction * geo.size.width, y: geo.size.height / 2)
+                        .opacity(shouldShowPlayed ? 1 : 0)
+                    let autoFadeDelay: Double = {
+                        guard appState.settings.autoFadeCortinasEnabled,
+                              appState.displayState.mode == .cortina,
+                              player.duration > 0 else { return -1 }
+                        if entry.ignoresAutoFade { return -1 }
+                        let fade = appState.settings.builtInFadeDuration
+                        let play = appState.settings.cortinaPlayTime
+                        let dur = player.duration
+                        if dur > play + fade { return play }
+                        if dur > fade        { return dur - fade }
+                        return -1
+                    }()
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.85))
+                        .frame(width: 2, height: 8)
+                        .position(x: (autoFadeDelay / player.duration) * geo.size.width,
+                                  y: geo.size.height / 2)
+                        .opacity(autoFadeDelay >= 0 ? 1 : 0)
+                }
+                .allowsHitTesting(false)
+            }
+            .frame(height: 16)
+            HStack {
+                Text(formatTime(player.elapsed))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("-\(formatTime(max(0, player.duration - player.elapsed)))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let s = Int(seconds)
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }

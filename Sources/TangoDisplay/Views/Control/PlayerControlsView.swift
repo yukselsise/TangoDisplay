@@ -23,7 +23,6 @@ struct PlayerControlsView: View {
                     .frame(maxHeight: .infinity)
             }
             .fixedSize(horizontal: false, vertical: true)
-            seekBar
             volumeRow
         }
         .padding(.horizontal, 16)
@@ -123,61 +122,6 @@ struct PlayerControlsView: View {
         }
     }
 
-    private var seekBar: some View {
-        VStack(spacing: 3) {
-            GeometryReader { geo in
-                let progress = player.duration > 0
-                    ? player.elapsed / max(player.duration, 1)
-                    : 0
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(nsColor: .separatorColor))
-                        .frame(height: 4)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(ControlTheme.accent)
-                        .frame(width: geo.size.width * progress, height: 4)
-                    let shouldShow = !appState.settings.markAsPlayedAfterCompletion
-                        && player.duration > 0
-                        && !player.isCurrentEntryMarkedAsPlayed
-                    let fraction = min(1.0, Double(appState.settings.markAsPlayedAfterSeconds) / player.duration)
-                    Rectangle()
-                        .fill(ControlTheme.accent.opacity(0.7))
-                        .frame(width: 2, height: 10)
-                        .position(x: fraction * geo.size.width, y: geo.size.height / 2)
-                        .opacity(shouldShow ? 1 : 0)
-                    let autoFadeDelay: Double = {
-                        guard appState.settings.autoFadeCortinasEnabled,
-                              appState.displayState.mode == .cortina,
-                              player.duration > 0 else { return -1 }
-                        if appState.setlist.entries.first(where: { $0.id == player.currentEntryID })?.ignoresAutoFade == true { return -1 }
-                        let fade = appState.settings.builtInFadeDuration
-                        let play = appState.settings.cortinaPlayTime
-                        let dur = player.duration
-                        if dur > play + fade { return play }
-                        if dur > fade        { return dur - fade }
-                        return -1
-                    }()
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.85))
-                        .frame(width: 2, height: 10)
-                        .position(x: (autoFadeDelay / player.duration) * geo.size.width, y: geo.size.height / 2)
-                        .opacity(autoFadeDelay >= 0 ? 1 : 0)
-                }
-                .allowsHitTesting(false)
-            }
-            .frame(height: 20)
-            HStack {
-                Text(formatTime(player.elapsed))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text("-\(formatTime(max(0, player.duration - player.elapsed)))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
     private var volumeRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "speaker.fill")
@@ -244,11 +188,4 @@ struct PlayerControlsView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func formatTime(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let s = Int(seconds)
-        return String(format: "%d:%02d", s / 60, s % 60)
-    }
 }

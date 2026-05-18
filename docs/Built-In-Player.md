@@ -66,6 +66,7 @@ Each row shows:
 | Stop marker | Small stop icon when "Stop After This Track" is set |
 | Auto-gap icon | Filled green wave = auto-gap silence applied before this track · Outlined grey wave = skipped or ignored |
 | Last Tanda flag | Red flag icon = this cortina is marked as the last tanda and will activate the Last Tanda label when it plays |
+| Progress bar | Appears beneath the currently-playing row: shows elapsed position, remaining time, the mark-as-played threshold marker, and the auto-fade marker (for cortinas when Auto-fade is enabled) |
 
 The setlist persists across app restarts — it is saved automatically to Application Support.
 
@@ -77,15 +78,13 @@ The player controls sit above the track list.
 
 > **Screenshot placeholder:** player controls area showing level meter, transport, seek bar, fade buttons, volume, eye button, and artwork
 
-The controls are arranged in three columns with a seek bar and volume row below:
+The controls are arranged in three columns with a volume row below:
 
 - **Level meter** — dual-channel (L/R) bar graph on the left side of the controls panel. Gradient bars show real-time RMS level from green (quiet) through yellow to red (loud). White peak-hold markers latch for 2 seconds then decay; they turn red when clipping is detected. Tap the meter to reset clip indicators. A dB scale (-0, -3, -6, -12, -24) runs alongside.
 - **Eye button** — scrolls the track list to highlight the currently playing track
 - **Track info** — title and artist of the current track
 - **Transport button** — large central play/stop button (see states below)
 - **Fade buttons** — Fade & Stop and Fade & Continue (see below)
-- **Seek bar** — drag to jump to any position in the track. When "After…" mark-as-played timing is active, a small vertical marker line shows the threshold position. An orange marker shows where auto-fade will begin (when Auto-fade is enabled for a cortina).
-- **Time display** — elapsed and remaining time
 - **Volume slider** — master volume for the built-in player (0–100%)
 - **Artwork panel** — current track artwork, sized to match the height of the controls column. Falls back to the SetlistLogo placeholder when no artwork is embedded in the file.
 
@@ -217,7 +216,7 @@ Auto-fade automatically fades out a cortina and advances to the next track after
 2. Under **Built-in Player**, enable the **Auto-fade all cortinas** toggle
 3. Use the **Cortina play time** slider to set how many seconds of the cortina should play before the fade begins (5–120 s; default 30 s)
 
-When a cortina starts, an orange marker appears on the seek bar to show exactly when the fade will trigger.
+When a cortina starts, an orange marker appears on the in-row progress bar to show exactly when the fade will trigger.
 
 > **Short cortinas:** If a cortina is shorter than the play time plus the fade duration, TangoDisplay adjusts automatically — the fade starts early enough to complete before the track ends.
 
@@ -227,13 +226,13 @@ When auto-fade is enabled for a cortina, the **Fade & Stop** and **Fade & Contin
 
 ### Per-Track Override
 
-Right-click any cortina row in the setlist and select **Skip Auto-fade** to disable auto-fade for that track only. The orange seek-bar marker disappears and the fade buttons become active for manual control. The option is hidden once the fade has already started.
+Right-click any cortina row in the setlist and select **Skip Auto-fade** to disable auto-fade for that track only. The orange progress-bar marker disappears and the fade buttons become active for manual control. The option is hidden once the fade has already started.
 
 ### Reading the Indicators
 
 | Indicator | What it means |
 |---|---|
-| **Orange marker on seek bar** | The point at which auto-fade will begin for the current cortina |
+| **Orange marker on progress bar** | The point at which auto-fade will begin for the current cortina (visible in the in-row progress bar beneath the playing track) |
 | **Setlist footer orange dot** | Orange dot + "Auto-fade: on" = feature active. Grey dot + "Auto-fade: off" = feature disabled. |
 | **Fade buttons (disabled)** | Auto-fade is scheduled — the transition will happen automatically |
 
