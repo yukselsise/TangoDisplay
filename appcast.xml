@@ -4,6 +4,26 @@
         <title>TangoDisplay</title>
         <link>https://github.com/richardsladetdj-creator/TangoDisplay</link>
         <item>
+            <title>Version 3.16.7</title>
+            <pubDate>Mon, 19 May 2026 12:00:00 +0000</pubDate>
+            <sparkle:version>57</sparkle:version>
+            <sparkle:shortVersionString>3.16.7</sparkle:shortVersionString>
+            <description><![CDATA[
+                <ul>
+                    <li>Built-in player renamed "Setlist (Built-In Player)" — appears first in the player list and is now the default for fresh installs, with a "Recommended" badge in Settings › Player</li>
+                    <li>Cortina denylist editor redesigned as a cleaner three-column layout (Genre | Display label | Controls)</li>
+                    <li>Setlist state (paused, queued, played) now persists to disk immediately</li>
+                    <li>Context menu now shows only relevant options depending on track state</li>
+                    <li>Removed unused "Last Tanda Label" colour setting from Appearance › Colours</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/richardsladetdj-creator/TangoDisplay/releases/download/v3.16.7/TangoDisplay-v3.16.7-universal.zip"
+                sparkle:edSignature="pKffHu73lF1CwGlRVJURyQmvXmiy5i/UW2WCJYTM6lSuudz2oXOX/Ks/vt9yYiuy//pBh5WMMV+37ZfnWyR5AQ=="
+                length="4835806"
+                type="application/zip"/>
+        </item>
+        <item>
             <title>Version 3.16.6</title>
             <pubDate>Mon, 19 May 2026 12:00:00 +0000</pubDate>
             <sparkle:version>56</sparkle:version>
