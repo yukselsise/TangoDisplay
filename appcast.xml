@@ -4,6 +4,22 @@
         <title>TangoDisplay</title>
         <link>https://github.com/richardsladetdj-creator/TangoDisplay</link>
         <item>
+            <title>Version 3.16.6</title>
+            <pubDate>Mon, 19 May 2026 12:00:00 +0000</pubDate>
+            <sparkle:version>56</sparkle:version>
+            <sparkle:shortVersionString>3.16.6</sparkle:shortVersionString>
+            <description><![CDATA[
+                <ul>
+                    <li>⌘V paste now works with Foobar2000 — copy tracks with ⌘C in Foobar2000 and paste them directly into the Setlist panel</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/richardsladetdj-creator/TangoDisplay/releases/download/v3.16.6/TangoDisplay-v3.16.6-universal.zip"
+                sparkle:edSignature="bZ4/GCW8cq2oX3UYWptBE4fgWU6AU67zSXOAe8FUgriD69uV/+m+8LzKAj0gZ1jmsgQIVP04Z55pz70JoWHdAQ=="
+                length="4819170"
+                type="application/zip"/>
+        </item>
+        <item>
             <title>Version 3.16.5</title>
             <pubDate>Sun, 18 May 2026 12:00:00 +0000</pubDate>
             <sparkle:version>55</sparkle:version>
