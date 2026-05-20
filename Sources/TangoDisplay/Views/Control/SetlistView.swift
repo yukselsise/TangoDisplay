@@ -194,6 +194,7 @@ struct SetlistView: View {
 
     @ViewBuilder
     private func rowView(for entry: SetlistEntry, wouldSkipAutoGap: Bool) -> some View {
+        let detector = settings.makeDetector()
         SetlistRowView(
             entry: entry,
             isStopAfter: entry.id == setlist.stopAfterEntryID,
@@ -209,6 +210,7 @@ struct SetlistView: View {
             genreColorsEnabled: settings.genreColorsEnabled,
             genreColorRules: settings.genreColorRules,
             genreColorTitleEnabled: settings.genreColorTitleEnabled,
+            isCortina: detector.isCortina(genre: entry.track.genre),
             player: activeEntryID == entry.id && isPlayerActive ? player : nil
         )
         .tag(entry.id)
@@ -738,10 +740,15 @@ struct SetlistRowView: View {
     var genreColorsEnabled: Bool = false
     var genreColorRules: [GenreColorRule] = []
     var genreColorTitleEnabled: Bool = false
+    var isCortina: Bool = false
     var player: LocalPlayerSource? = nil
 
     private var isCurrent: Bool { entry.state == .playing || entry.state == .paused || isActivelyPlaying }
     private var isCurrentPlaying: Bool { entry.state == .playing || isActivelyPlaying }
+    private var isBoldBright: Bool {
+        guard entry.state == .queued, !isNextToPlay, !isCurrent else { return false }
+        return !genreColorsEnabled || isCortina
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -751,7 +758,7 @@ struct SetlistRowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.track.title)
                         .font(.system(size: 13))
-                        .fontWeight(entry.state == .queued ? .medium : .regular)
+                        .fontWeight(isBoldBright ? .semibold : (entry.state == .queued ? .medium : .regular))
                         .lineLimit(1)
                         .foregroundColor(genreColorTitleEnabled ? genreTagColor : (entry.state == .played && !isActivelyPlaying ? .secondary : .primary))
                     Text(entry.track.artist + (showYear ? (entry.track.year.map { " · \($0)" } ?? "") : ""))
@@ -830,13 +837,14 @@ struct SetlistRowView: View {
         if isNextToPlay { return .accentColor }
         if isCurrent && isCurrentPlaying { return .green }
         if isCurrent && entry.state == .paused { return .orange }
-        if entry.state == .queued && genreColorsEnabled {
+        if entry.state == .queued && genreColorsEnabled && !isCortina {
             if let rule = genreColorRules.first(where: {
                 entry.track.genre.localizedCaseInsensitiveContains($0.keyword)
             }) {
                 return Color(hex: rule.colorHex)
             }
         }
+        if isBoldBright { return .primary }
         return .secondary
     }
 

@@ -549,10 +549,15 @@ Keywords are case-insensitive and match anywhere in the genre name — `tango` m
 | Paused (armed) | Orange (always) |
 | Next to play | Accent blue (always) |
 | Already played | Grey (always) |
+| Upcoming / queued — Cortina | Bold/bright (always, even when colours are ON) |
 | Upcoming / queued — keyword match | Your custom colour |
 | Upcoming / queued — no match | Grey |
 
-Custom colours apply only to tracks that have not yet been played and are not currently playing — the tanda structure is visible at a glance without interfering with standard playback indicators.
+**When genre colours are OFF:** upcoming (unplayed) tracks are shown in semibold with full-brightness text so they stand out clearly from already-played tracks, regardless of any colour rules.
+
+**Cortinas always appear bold/bright** — even when genre colours are enabled and a colour rule would otherwise match the cortina's genre tag. This ensures tanda breaks are always easy to spot.
+
+Custom colours apply only to non-cortina tracks that have not yet been played and are not currently playing — the tanda structure is visible at a glance without interfering with standard playback indicators.
 
 To remove a custom colour, click the **trash** icon next to the rule. The genre tag reverts to standard grey for upcoming tracks.
 
