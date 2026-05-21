@@ -155,6 +155,13 @@ public struct AppearanceProfile: Codable, Identifiable, Equatable {
     public var trackCounterFontBold:   Bool
     public var trackCounterFontItalic: Bool
 
+    // Override text font/colour
+    public var overrideTextFontName:   String
+    public var overrideTextFontSize:   Double
+    public var overrideTextFontBold:   Bool
+    public var overrideTextFontItalic: Bool
+    public var overrideTextColor:      String
+
     public init(id: UUID, name: String, isBuiltIn: Bool,
                 titleFontName: String = "System", titleFontSize: Double = 72,
                 titleFontBold: Bool = true, titleFontItalic: Bool = false,
@@ -236,7 +243,10 @@ public struct AppearanceProfile: Codable, Identifiable, Equatable {
                 lastTandaLabelColor: String = "#FF4444",
                 showLastTandaLabel: Bool = true,
                 trackCounterFontName: String = "System", trackCounterFontSize: Double = 36,
-                trackCounterFontBold: Bool = false, trackCounterFontItalic: Bool = false) {
+                trackCounterFontBold: Bool = false, trackCounterFontItalic: Bool = false,
+                overrideTextFontName: String = "System", overrideTextFontSize: Double = 72,
+                overrideTextFontBold: Bool = false, overrideTextFontItalic: Bool = false,
+                overrideTextColor: String = "#FFFFFF") {
         self.id = id
         self.name = name
         self.isBuiltIn = isBuiltIn
@@ -343,6 +353,11 @@ public struct AppearanceProfile: Codable, Identifiable, Equatable {
         self.trackCounterFontSize     = trackCounterFontSize
         self.trackCounterFontBold     = trackCounterFontBold
         self.trackCounterFontItalic   = trackCounterFontItalic
+        self.overrideTextFontName   = overrideTextFontName
+        self.overrideTextFontSize   = overrideTextFontSize
+        self.overrideTextFontBold   = overrideTextFontBold
+        self.overrideTextFontItalic = overrideTextFontItalic
+        self.overrideTextColor      = overrideTextColor
     }
 
     // Custom decoder so existing JSON lacking the image keys still loads cleanly.
@@ -485,6 +500,12 @@ public struct AppearanceProfile: Codable, Identifiable, Equatable {
         trackCounterFontSize   = try c.decodeIfPresent(Double.self, forKey: .trackCounterFontSize)   ?? 36
         trackCounterFontBold   = try c.decodeIfPresent(Bool.self,   forKey: .trackCounterFontBold)   ?? false
         trackCounterFontItalic = try c.decodeIfPresent(Bool.self,   forKey: .trackCounterFontItalic) ?? false
+
+        overrideTextFontName   = try c.decodeIfPresent(String.self, forKey: .overrideTextFontName)   ?? "System"
+        overrideTextFontSize   = try c.decodeIfPresent(Double.self, forKey: .overrideTextFontSize)   ?? 72
+        overrideTextFontBold   = try c.decodeIfPresent(Bool.self,   forKey: .overrideTextFontBold)   ?? false
+        overrideTextFontItalic = try c.decodeIfPresent(Bool.self,   forKey: .overrideTextFontItalic) ?? false
+        overrideTextColor      = try c.decodeIfPresent(String.self, forKey: .overrideTextColor)      ?? titleColor
 
         // Migration: append .lastTandaLabel to order lists if absent
         if !danceItemOrder.contains(.lastTandaLabel) {

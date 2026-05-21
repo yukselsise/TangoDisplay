@@ -50,6 +50,7 @@ protocol MusicPlayerSource: AnyObject {
     func play()
     func pause()
     func skipNext()
+    func skipNextImmediate()
     func skipPrevious()
     func seek(to seconds: Double)
 }
@@ -61,6 +62,7 @@ extension MusicPlayerSource {
     func play() {}
     func pause() {}
     func skipNext() {}
+    func skipNextImmediate() { skipNext() }
     func skipPrevious() {}
     func seek(to seconds: Double) {}
 }

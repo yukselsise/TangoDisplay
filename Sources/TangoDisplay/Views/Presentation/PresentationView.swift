@@ -194,8 +194,8 @@ struct PresentationView: View {
 
     private var overrideView: some View {
         Text(appState.displayState.overrideText ?? "")
-            .font(.system(size: 72, weight: .light))
-            .foregroundColor(activeProfile.titleSwiftUIColor)
+            .font(activeProfile.overrideTextFont)
+            .foregroundColor(activeProfile.overrideTextSwiftUIColor)
             .multilineTextAlignment(.center)
             .padding(60)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

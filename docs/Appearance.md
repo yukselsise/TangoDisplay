@@ -80,6 +80,10 @@ A **Source** picker lets you choose where the singer name comes from:
 
 A **Singer** font row appears below the source picker so you can set the typeface, size, and style independently of the other text elements.
 
+### Override Text
+
+An **Override Text** section at the bottom of the Text tab lets you set the font for the manually-entered override message (⌘⇧O). Its colour is set in the Colours tab under **Override text**.
+
 ---
 
 ## Colours
@@ -101,6 +105,7 @@ Set the colour of each element on the dancer display:
 | **Cortina title** | The cortina track's own title (when cortina track display is enabled) |
 | **Idle message** | The text shown when nothing is playing |
 | **Last Tanda label** | The Last Tanda announcement text when Last Tanda mode is active |
+| **Override text** | The manually-entered override message shown via ⌘⇧O |
 
 Click any colour swatch to open the macOS colour picker.
 

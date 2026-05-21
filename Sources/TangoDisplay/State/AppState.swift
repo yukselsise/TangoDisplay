@@ -550,7 +550,7 @@ final class AppState: ObservableObject {
     }
 
     func transportStop()           { cancelFade(); localPlayer?.stopTrack() }
-    func transportSkipNext()       { cancelFade(); cancelPauseArm(); activeSource.skipNext() }
+    func transportSkipNext()       { cancelFade(); cancelPauseArm(); activeSource.skipNextImmediate() }
     func transportSkipPrevious()   { cancelFade(); cancelPauseArm(); activeSource.skipPrevious() }
     func transportSeek(to s: Double) { activeSource.seek(to: s) }
 

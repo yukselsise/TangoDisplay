@@ -289,7 +289,7 @@ struct HTMLReportGenerator {
             <section class="mb-8">
               <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
                 \(card("Tracks", "\(totalTracks)"))
-                \(card("Played", "\(playedTracks)"))
+                \(card("Played", "\(playedTracks) / \(totalTracks)"))
                 \(card("Duration", formatDuration(totalSeconds)))
                 \(card("Years", yearRange))
                 \(card("Artists", "\(uniqueArtists)"))

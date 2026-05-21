@@ -49,7 +49,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.18.2-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.18.3-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -135,6 +135,13 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.18.3
+- Override Text (⌘⇧O) now has its own font and colour settings in Appearance
+- When paused, pressing play again bypasses auto-gap and plays immediately
+- Auto-gap calculation simplified: gap applied only when existing silence falls short
+- Artwork tab: new artist entry auto-focuses the name field; remove button uses trash icon
+- Setlist report: Played card shows played/total count; currently-playing track shown as played in setlist view
 
 ### v3.18.2
 - Setlist player: unplayed tracks now appear in semibold with full-brightness text when genre colours are disabled, making them visually distinct from played tracks.

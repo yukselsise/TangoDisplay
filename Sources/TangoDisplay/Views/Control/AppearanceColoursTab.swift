@@ -29,6 +29,13 @@ struct AppearanceColoursTab: View {
                 Text("Labels & Messages")
                     .foregroundColor(ControlTheme.accent)
             }
+
+            Section {
+                colorRow("Override Text", hex: $working.overrideTextColor)
+            } header: {
+                Text("Override Text")
+                    .foregroundColor(ControlTheme.accent)
+            }
         }
         .formStyle(.grouped)
     }

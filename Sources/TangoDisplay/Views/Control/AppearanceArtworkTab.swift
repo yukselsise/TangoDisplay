@@ -13,6 +13,9 @@ struct AppearanceArtworkTab: View {
     let onAddArtistBackground: () -> Void
     let onRemoveArtistBackground: (ArtistBackground) -> Void
 
+    @FocusState private var focusedEntryId: UUID?
+    @State private var prevArtistCount: Int = 0
+
     var body: some View {
         Form {
             Section {
@@ -201,6 +204,15 @@ struct AppearanceArtworkTab: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            prevArtistCount = working.artistBackgrounds.count
+        }
+        .onChange(of: working.artistBackgrounds.count) { newCount in
+            if newCount > prevArtistCount, let lastId = working.artistBackgrounds.last?.id {
+                focusedEntryId = lastId
+            }
+            prevArtistCount = newCount
+        }
     }
 
     @ViewBuilder
@@ -227,10 +239,14 @@ struct AppearanceArtworkTab: View {
                 }
             }
 
-            TextField("Artist name", text: entry.artistName)
+            Text("Name")
+                .foregroundColor(.secondary)
+                .fixedSize()
+
+            TextField("", text: entry.artistName)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: 26)
                 .background(Color(NSColor.textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .overlay(
@@ -242,18 +258,12 @@ struct AppearanceArtworkTab: View {
                             lineWidth: 1
                         )
                 )
+                .focused($focusedEntryId, equals: e.id)
 
             Button(e.imageFilename == nil ? "Pick Image…" : "Change Image…") {
                 onPickArtistImage(e)
             }
             .buttonStyle(.bordered)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(
-                        e.imageFilename == nil ? Color.red.opacity(0.6) : Color.clear,
-                        lineWidth: 1.5
-                    )
-            )
 
             if e.imageFilename != nil {
                 Button("Clear") { onClearArtistImage(e) }
@@ -270,7 +280,7 @@ struct AppearanceArtworkTab: View {
             Button {
                 onRemoveArtistBackground(e)
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "trash")
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)

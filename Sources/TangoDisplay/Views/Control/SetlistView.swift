@@ -475,7 +475,7 @@ struct SetlistView: View {
                 year: e.track.year,
                 albumArtist: e.track.albumArtist,
                 duration: e.duration,
-                isPlayed: e.state == .played,
+                isPlayed: e.state != .queued,
                 isLastTanda: e.isLastTanda
             )
         }

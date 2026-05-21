@@ -194,6 +194,10 @@ When **Skip gap before first track** is enabled (the default), the opening track
 
 Right-click any queued track row and select **Ignore Auto-gap before this Track** to exempt that individual track. The option becomes **Resume Auto-gap** when already set; click it again to re-enable. This lets you keep auto-gap active globally while skipping it for specific tracks (e.g. a track you want to follow immediately after its predecessor).
 
+### Pausing and Resuming
+
+When you pause and then press play again, the player resumes without applying the auto-gap — the next track begins immediately. Auto-gap only applies during normal end-of-track transitions.
+
 ### Reading the Indicators
 
 Three places in the UI reflect auto-gap state:

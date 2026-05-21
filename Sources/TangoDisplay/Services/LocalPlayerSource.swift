@@ -505,6 +505,31 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
     }
 
+    func skipNextImmediate() {
+        guard let id = currentEntryID else { play(); return }
+        let shouldStop = (id == setlist.stopAfterEntryID)
+        setlist.markPlayed(id: id)
+        if shouldStop { setlist.stopAfterEntryID = nil }
+        if !shouldStop, let next = setlist.firstUnplayed(after: id) {
+            loadEntry(next, bypassAutoGap: true)
+            playerNode.play()
+            isActivePlaying = true
+            reportCurrentState()
+        } else {
+            currentEntryID = nil
+            isActivePlaying = false
+            replayGainStatus = ""
+            playerNode.stop()
+            audioFile = nil
+            elapsed = 0
+            duration = 0
+            seekOffset = 0
+            reportCurrentState()
+            reportPlaylist()
+            onNextTrackUpdate?(nil)
+        }
+    }
+
     func skipPrevious() {
         if elapsed > 3 {
             seek(to: 0)
@@ -561,7 +586,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
 
     // MARK: - Private: entry loading
 
-    private func loadEntry(_ entry: SetlistEntry) {
+    private func loadEntry(_ entry: SetlistEntry, bypassAutoGap: Bool = false) {
         earlyMarkedEntryIDs.remove(entry.id)
         isCurrentEntryMarkedAsPlayed = false
         playerNode.stop()
@@ -596,7 +621,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 && !setlist.entries.contains(where: { $0.state == .played })
             var autoGapApplied = false
             var autoGapSkipped = false
-            if !entry.ignoresAutoGap && settings.autoGapEnabled {
+            if !bypassAutoGap && !entry.ignoresAutoGap && settings.autoGapEnabled {
                 if settings.autoGapIgnoreFirstTrack && isFirstTrack {
                     autoGapSkipped = true
                 } else {
@@ -678,9 +703,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     ) -> Double {
         guard minimumSilence > 0 else { return 0 }
         let existing = prevSilenceAtEnd + nextSilenceAtStart
-        let needed = max(0, minimumSilence - existing)
-        // Matches Embrace: if existing silence already meets minimum, still add 1s so the gap is perceptible.
-        return needed == 0 ? 1.0 : needed
+        return max(0, minimumSilence - existing)
     }
 
     private func makeSilenceBuffer(format: AVAudioFormat, frameCount: AVAudioFrameCount) -> AVAudioPCMBuffer {

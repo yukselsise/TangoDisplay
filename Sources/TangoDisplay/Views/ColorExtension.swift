@@ -68,4 +68,6 @@ extension AppearanceProfile {
     var nextUpLabelFont:    Font { font(name: nextUpLabelFontName,    size: nextUpLabelFontSize,    bold: nextUpLabelFontBold,    italic: nextUpLabelFontItalic) }
     var idleMessageFont:    Font { font(name: idleMessageFontName,    size: idleMessageFontSize,    bold: idleMessageFontBold,    italic: idleMessageFontItalic) }
     var lastTandaLabelFont: Font { font(name: lastTandaLabelFontName, size: lastTandaLabelFontSize, bold: lastTandaLabelFontBold, italic: lastTandaLabelFontItalic) }
+    var overrideTextSwiftUIColor: Color { Color(hex: overrideTextColor) }
+    var overrideTextFont: Font { font(name: overrideTextFontName, size: overrideTextFontSize, bold: overrideTextFontBold, italic: overrideTextFontItalic) }
 }

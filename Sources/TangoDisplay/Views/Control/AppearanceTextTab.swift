@@ -59,6 +59,14 @@ struct AppearanceTextTab: View {
                     Image(systemName: "info.circle")
                 }
             }
+
+            Section {
+                fontRow("Override Text", name: $working.overrideTextFontName,   size: $working.overrideTextFontSize,
+                        bold: $working.overrideTextFontBold, italic: $working.overrideTextFontItalic)
+            } header: {
+                Text("Override Text")
+                    .foregroundColor(ControlTheme.accent)
+            }
         }
         .formStyle(.grouped)
     }
@@ -76,7 +84,7 @@ struct AppearanceTextTab: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 180)
+            .frame(width: 180, alignment: .leading)
             Spacer()
             Stepper(value: size, in: 8...200, step: 2) {
                 Text(String(format: "%.0fpt", size.wrappedValue))
