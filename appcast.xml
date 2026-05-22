@@ -4,6 +4,23 @@
         <title>TangoDisplay</title>
         <link>https://github.com/richardsladetdj-creator/TangoDisplay</link>
         <item>
+            <title>Version 3.20.0</title>
+            <pubDate>Thu, 22 May 2026 12:00:00 +0000</pubDate>
+            <sparkle:version>66</sparkle:version>
+            <sparkle:shortVersionString>3.20.0</sparkle:shortVersionString>
+            <description><![CDATA[
+                <ul>
+                    <li>New: Focus Mode — single-window split view combining live preview and setlist (⌘⇧F). Collapsible controls panel with Force Poll, Override, Pause Display, and Last Tanda.</li>
+                    <li>New: Hog Mode playback-interrupted alert — if another app claims the audio device during active playback, an alert appears with Retry and OK buttons.</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/richardsladetdj-creator/TangoDisplay/releases/download/v3.20.0/TangoDisplay-v3.20.0-universal.zip"
+                sparkle:edSignature="IMXfun7HMal8UMG2+MgUQgQZWDajilrl/XzWqsI63sDqHxNmilrien0pN42PLR3NUYYzfaI/jhJ2fhKL85x4Cg=="
+                length="5308941"
+                type="application/zip"/>
+        </item>
+        <item>
             <title>Version 3.19.1</title>
             <pubDate>Thu, 22 May 2026 12:00:00 +0000</pubDate>
             <sparkle:version>65</sparkle:version>
