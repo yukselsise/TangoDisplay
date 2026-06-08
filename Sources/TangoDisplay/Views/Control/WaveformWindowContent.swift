@@ -3,20 +3,47 @@ import SwiftUI
 struct WaveformWindowContent: View {
     @EnvironmentObject var appState: AppState
 
+    var body: some View {
+        if let player = appState.localPlayer {
+            WaveformWindowPlayer(player: player)
+        } else {
+            Text("No track playing")
+                .foregroundColor(.secondary)
+                .font(.system(size: 13))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+    }
+}
+
+// MARK: -
+
+private struct WaveformWindowPlayer: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var player: LocalPlayerSource
+
     @State private var waveformData: WaveformLoader.WaveformData? = nil
     @State private var isLoading = false
 
     private var currentFileURL: URL? {
-        appState.setlist.entries.first(where: {
+        // Primary: a setlist entry the player has confirmed as playing/paused
+        if let url = appState.setlist.entries.first(where: {
             $0.state == .playing || $0.state == .paused
-        })?.fileURL
+        })?.fileURL { return url }
+        // Fallback: player's current entry (may be .queued during transitions or pause-advance)
+        if let id = player.currentEntryID,
+           let entry = appState.setlist.entries.first(where: { $0.id == id }) {
+            return entry.fileURL
+        }
+        return nil
     }
 
     var body: some View {
         ZStack {
             if isLoading {
                 ProgressView()
-            } else if let data = waveformData, let player = appState.localPlayer {
+            } else if let data = waveformData {
                 WaveformPlayerView(data: data, player: player)
             } else {
                 Text("No track playing")

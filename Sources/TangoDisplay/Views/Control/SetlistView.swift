@@ -671,7 +671,7 @@ struct SetlistView: View {
                     Button { openWindow(id: "waveform") } label: {
                         Label("Waveform", systemImage: "waveform.path")
                     }
-                    .disabled(!isPlayerActive)
+                    .disabled(player.currentEntryID == nil)
                     .help("View waveform for current track")
                 }
             }

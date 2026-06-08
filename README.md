@@ -49,7 +49,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.25.0-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.25.1-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -135,6 +135,10 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.25.1
+- **Waveform window reliability**: fixed intermittent "No track playing" flashes during track-to-track transitions and when pausing an early-marked track; the waveform now stays connected throughout
+- **Waveform toolbar button**: the button is now enabled whenever tracks are loaded in the setlist, not only when a track is actively playing
 
 ### v3.25.0
 - **Performance Mode**: mark any setlist track as a performance track (right-click › Mark as Performance). When it plays, the dancer display switches to a custom performance view with a dedicated background image and fully configurable text lines — font, size, colour, and `{title}` / `{artist}` / `{genre}` / `{year}` placeholders. A "Show during cortina" option pre-announces the performance on the cortina screen. Playback stops automatically after each performance track by default (toggle in Player Settings).

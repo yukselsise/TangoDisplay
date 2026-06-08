@@ -330,7 +330,7 @@ You can adjust the duration while a track is playing. The new value takes effect
 
 ## Waveform Window
 
-Click the **Waveform button** (waveform path icon) in the Setlist toolbar to open a compact floating window showing the audio waveform of the currently playing track.
+Click the **Waveform button** (waveform path icon) in the Setlist toolbar to open a compact floating window showing the audio waveform of the current or upcoming track.
 
 The window displays:
 
@@ -338,7 +338,7 @@ The window displays:
 - **Playhead** — a red line that moves in real time to show elapsed position.
 - **Elapsed / total time** — shown at the left and right of the waveform.
 
-Waveform data is computed from the audio file when a track starts and cached so subsequent plays load instantly. The button is disabled when no track is playing.
+Waveform data is computed from the audio file on demand and cached so subsequent plays load instantly. The button is enabled whenever tracks are loaded in the setlist.
 
 ---
 
