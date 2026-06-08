@@ -300,6 +300,25 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(hideLeftMenuBarOnStartup, forKey: kPrefix + "hideLeftMenuBarOnStartup") }
     }
 
+    // MARK: - Performance mode
+
+    @Published var stopAfterEachPerformanceTrack: Bool {
+        didSet { UserDefaults.standard.set(stopAfterEachPerformanceTrack, forKey: kPrefix + "stopAfterEachPerformanceTrack") }
+    }
+    @Published var performanceBackgroundImageFilename: String? {
+        didSet { UserDefaults.standard.set(performanceBackgroundImageFilename, forKey: kPrefix + "performanceBackgroundImageFilename") }
+    }
+    @Published var performanceBackgroundDuringCortina: Bool {
+        didSet { UserDefaults.standard.set(performanceBackgroundDuringCortina, forKey: kPrefix + "performanceBackgroundDuringCortina") }
+    }
+    @Published var performanceTextLines: [PerformanceTextLine] {
+        didSet {
+            if let data = try? JSONEncoder().encode(performanceTextLines) {
+                UserDefaults.standard.set(data, forKey: kPrefix + "performanceTextLines")
+            }
+        }
+    }
+
     // MARK: - Init
 
     init() {
@@ -432,6 +451,17 @@ final class AppSettings: ObservableObject {
         startupMode = StartupMode(rawValue: rawStartup) ?? .fullExperience
         hideLeftMenuBarOnStartup = ud.object(forKey: kPrefix + "hideLeftMenuBarOnStartup")
             .flatMap { $0 as? Bool } ?? false
+        stopAfterEachPerformanceTrack = ud.object(forKey: kPrefix + "stopAfterEachPerformanceTrack")
+            .flatMap { $0 as? Bool } ?? true
+        performanceBackgroundImageFilename = ud.string(forKey: kPrefix + "performanceBackgroundImageFilename")
+        performanceBackgroundDuringCortina = ud.object(forKey: kPrefix + "performanceBackgroundDuringCortina")
+            .flatMap { $0 as? Bool } ?? false
+        if let data = ud.data(forKey: kPrefix + "performanceTextLines"),
+           let lines = try? JSONDecoder().decode([PerformanceTextLine].self, from: data) {
+            performanceTextLines = lines
+        } else {
+            performanceTextLines = []
+        }
     }
 
     // MARK: - Helpers

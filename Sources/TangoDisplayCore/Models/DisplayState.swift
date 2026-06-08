@@ -6,6 +6,7 @@ public enum DisplayMode: Equatable, Hashable {
     case idle
     case paused
     case override
+    case performance
 }
 
 public struct TandaPosition: Equatable, Hashable {
@@ -29,18 +30,21 @@ public struct DisplayState: Equatable, Hashable {
     public var nextTrack: Track?           // non-nil in .cortina mode: first track of next tanda
     public var tandaPosition: TandaPosition?
     public var overrideText: String?
+    public var nextTrackIsPerformance: Bool = false  // true when next tanda starts with a performance track
 
     public init(
         mode: DisplayMode = .idle,
         currentTrack: Track? = nil,
         nextTrack: Track? = nil,
         tandaPosition: TandaPosition? = nil,
-        overrideText: String? = nil
+        overrideText: String? = nil,
+        nextTrackIsPerformance: Bool = false
     ) {
         self.mode = mode
         self.currentTrack = currentTrack
         self.nextTrack = nextTrack
         self.tandaPosition = tandaPosition
         self.overrideText = overrideText
+        self.nextTrackIsPerformance = nextTrackIsPerformance
     }
 }

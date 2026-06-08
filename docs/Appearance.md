@@ -10,6 +10,7 @@ The **Appearance** tab controls everything about how the dancer display looks. S
 | **Artwork & Motion** | Transition style and duration, album artwork, background image, and artist backgrounds |
 | **Cortina** | What is shown on-screen during a cortina |
 | **Last Tanda** | Last Tanda announcement label settings |
+| **Performance** | Background image and text lines shown when a performance track is playing |
 
 ---
 
@@ -214,6 +215,36 @@ Configure the Last Tanda announcement label — displayed on the dancer screen w
 > **Label text** is shared across all profiles. **Colour**, **Font**, and **Show in display** are saved per-profile.
 
 The label's vertical position within the dance track and cortina coming-up layouts is controlled in **Text Order** (Visibility tab).
+
+---
+
+## Performance
+
+Configure the dancer display shown when a **performance track** is playing. Performance tracks are marked in the Setlist via right-click › **Mark as Performance** — see [Built-In Player › Performance Tracks](Built-In-Player#performance-tracks) for details on marking tracks and auto-stop behaviour.
+
+### Background Image
+
+| Control | Description |
+|---|---|
+| **Pick Image… / Change Image…** | Opens a file picker to select a background image shown only during performance tracks |
+| **Clear** | Removes the performance background image |
+| **Show during cortina** | When enabled, the performance background image also appears during the cortina that immediately precedes the performance track. Visible only when an image is set. |
+
+### Text Lines
+
+Add one or more text lines that appear on the performance display, each independently styled:
+
+| Control | Description |
+|---|---|
+| **+** | Adds a new text line |
+| **Text field** | The text to display. Supports placeholders: `{title}`, `{artist}`, `{genre}`, `{year}` — replaced with the playing track's metadata at runtime |
+| **Font picker** | Choose from installed system fonts |
+| **Size** | Point size of the text |
+| **Colour swatch** | Opens the macOS colour picker for this line's text colour |
+| **Show during cortina** | When enabled, this line also appears on the cortina screen during the cortina that precedes the performance |
+| **✕** | Removes this line |
+
+Lines are rendered top to bottom in the order they appear in the list.
 
 ---
 

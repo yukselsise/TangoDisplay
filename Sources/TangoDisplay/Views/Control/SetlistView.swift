@@ -455,6 +455,7 @@ struct SetlistView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var reportStore: SetlistReportStore
     @EnvironmentObject var configStore: PluginConfigurationStore
+    @Environment(\.openWindow) private var openWindow
     @State private var isDragTargeted = false
     @State private var activeEntryID: UUID? = nil
     @State private var isPlayerActive: Bool = false
@@ -593,6 +594,163 @@ struct SetlistView: View {
         } message: {
             Text(saveReportErrorMessage)
         }
+        .toolbar {
+            if settings.decibelMeterEnabled {
+                ToolbarItem(placement: .automatic) {
+                    DecibelToolbarLabel(
+                        monitor: appState.microphoneMonitor,
+                        low:  settings.decibelMeterLowThreshold,
+                        high: settings.decibelMeterHighThreshold
+                    )
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Button("Export to Apple Music") {
+                        exportPlaylistName = Self.defaultExportName()
+                        showExportDialog = true
+                    }
+                    Button("Export to M3U8…") {
+                        exportM3U8()
+                    }
+                    Divider()
+                    Button("Save Setlist Report…") {
+                        saveReportName = Self.defaultExportName()
+                        showSaveReportDialog = true
+                    }
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(setlist.entries.isEmpty)
+                .help("Export setlist to Apple Music, M3U8, or save a report")
+            }
+            ToolbarItem(placement: .automatic) {
+                HStack(spacing: 2) {
+                    Button { showEQPopover.toggle() } label: {
+                        Label("Equaliser", systemImage: "slider.horizontal.3")
+                    }
+                    .disabled(!isPlayerActive)
+                    .popover(isPresented: $showEQPopover) {
+                        EQView().environmentObject(settings)
+                    }
+                    .help("Equaliser")
+                    Button { showBalancePopover.toggle() } label: {
+                        Label("Balance", systemImage: "dial.medium")
+                    }
+                    .disabled(!isPlayerActive)
+                    .popover(isPresented: $showBalancePopover) {
+                        BalanceView().environmentObject(settings)
+                    }
+                    .help("Stereo balance")
+                    Button { showAutoGapPopover.toggle() } label: {
+                        Label("Auto-gap", systemImage: "timer")
+                    }
+                    .disabled(!settings.autoGapEnabled)
+                    .popover(isPresented: $showAutoGapPopover) {
+                        AutoGapPopoverView().environmentObject(settings)
+                    }
+                    .help("Auto-gap between tracks")
+                    Button { showReplayGainPopover.toggle() } label: {
+                        Label("ReplayGain", systemImage: "waveform")
+                    }
+                    .popover(isPresented: $showReplayGainPopover) {
+                        ReplayGainPopoverView(player: player)
+                            .environmentObject(settings)
+                    }
+                    .help("ReplayGain normalisation")
+                    if !settings.audioUnitPluginChain.isEmpty {
+                        Button { showPluginChainPopover.toggle() } label: {
+                            Label("Plugins", systemImage: "puzzlepiece.fill")
+                        }
+                        .popover(isPresented: $showPluginChainPopover) {
+                            PluginChainPopoverView(player: player)
+                                .environmentObject(settings)
+                        }
+                        .help("Audio Unit plugin chain")
+                    }
+                    Button { openWindow(id: "waveform") } label: {
+                        Label("Waveform", systemImage: "waveform.path")
+                    }
+                    .disabled(!isPlayerActive)
+                    .help("View waveform for current track")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    settings.hidePlayed.toggle()
+                    let target = activeEntryID
+                        ?? setlist.entries.first(where: { $0.state != .played })?.id
+                    scrollTrigger = target
+                } label: {
+                    Label("Hide Played", systemImage: settings.hidePlayed ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+                .disabled(setlist.entries.isEmpty)
+                .help(settings.hidePlayed ? "Show played tracks" : "Hide played tracks")
+            }
+            ToolbarItem(placement: .automatic) {
+                Button(role: .destructive) { showClearConfirmation = true } label: {
+                    Label("Clear Setlist", systemImage: "trash")
+                }
+                .disabled(setlist.entries.isEmpty)
+                .help("Clear all tracks from setlist")
+            }
+        }
+        .confirmationDialog(
+            "Clear Setlist?",
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear", role: .destructive) { setlist.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if isPlayerActive {
+                Text("Playback will stop and all tracks will be removed.")
+            } else {
+                Text("All tracks will be removed.")
+            }
+        }
+        .confirmationDialog(
+            deleteConfirmationTitle,
+            isPresented: Binding(
+                get: { pendingDeleteIDs != nil },
+                set: { if !$0 { pendingDeleteIDs = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let ids = pendingDeleteIDs {
+                    setlist.remove(ids: ids)
+                    selectedIDs.subtract(ids)
+                    pendingDeleteIDs = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteIDs = nil }
+        }
+        .alert("Export to Apple Music", isPresented: $showExportDialog) {
+            TextField("Playlist name", text: $exportPlaylistName)
+            Button("Export") {
+                let trimmed = exportPlaylistName.trimmingCharacters(in: .whitespaces)
+                let name = trimmed.isEmpty ? Self.defaultExportName() : trimmed
+                let urls = setlist.entries.map(\.fileURL)
+                createAppleMusicPlaylist(name: name, fileURLs: urls) { result in
+                    if case .failure(let error) = result {
+                        exportErrorMessage = error.localizedDescription
+                        showExportError = true
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Export Failed", isPresented: $showExportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage)
+        }
+        .alert("Last Tanda Not Configured", isPresented: $showLastTandaWarning) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Set the Last Tanda label text in Appearance Settings before marking a Last Tanda.")
+        }
     }
 
     // MARK: - Empty state
@@ -680,7 +838,8 @@ struct SetlistView: View {
         let detector = settings.makeDetector()
         SetlistRowView(
             entry: entry,
-            isStopAfter: entry.id == setlist.stopAfterEntryID,
+            isStopAfter: entry.id == setlist.stopAfterEntryID
+                      || (entry.isPerformance && settings.stopAfterEachPerformanceTrack),
             isActivelyPlaying: activeEntryID == entry.id && isPlayerActive,
             isNextToPlay: entry.id == nextToPlayID,
             showYear: settings.showYear,
@@ -762,158 +921,6 @@ struct SetlistView: View {
         .overlay(alignment: .bottom) {
             dropHint
         }
-        .toolbar {
-            if settings.decibelMeterEnabled {
-                ToolbarItem(placement: .automatic) {
-                    DecibelToolbarLabel(
-                        monitor: appState.microphoneMonitor,
-                        low:  settings.decibelMeterLowThreshold,
-                        high: settings.decibelMeterHighThreshold
-                    )
-                }
-            }
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button("Export to Apple Music") {
-                        exportPlaylistName = Self.defaultExportName()
-                        showExportDialog = true
-                    }
-                    Button("Export to M3U8…") {
-                        exportM3U8()
-                    }
-                    Divider()
-                    Button("Save Setlist Report…") {
-                        saveReportName = Self.defaultExportName()
-                        showSaveReportDialog = true
-                    }
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                .disabled(setlist.entries.isEmpty)
-                .help("Export setlist to Apple Music, M3U8, or save a report")
-            }
-            ToolbarItem(placement: .automatic) {
-                HStack(spacing: 2) {
-                    Button { showEQPopover.toggle() } label: {
-                        Label("Equaliser", systemImage: "slider.horizontal.3")
-                    }
-                    .disabled(!isPlayerActive)
-                    .popover(isPresented: $showEQPopover) {
-                        EQView().environmentObject(settings)
-                    }
-                    .help("Equaliser")
-                    Button { showBalancePopover.toggle() } label: {
-                        Label("Balance", systemImage: "dial.medium")
-                    }
-                    .disabled(!isPlayerActive)
-                    .popover(isPresented: $showBalancePopover) {
-                        BalanceView().environmentObject(settings)
-                    }
-                    .help("Stereo balance")
-                    Button { showAutoGapPopover.toggle() } label: {
-                        Label("Auto-gap", systemImage: "timer")
-                    }
-                    .disabled(!settings.autoGapEnabled)
-                    .popover(isPresented: $showAutoGapPopover) {
-                        AutoGapPopoverView().environmentObject(settings)
-                    }
-                    .help("Auto-gap between tracks")
-                    Button { showReplayGainPopover.toggle() } label: {
-                        Label("ReplayGain", systemImage: "waveform")
-                    }
-                    .popover(isPresented: $showReplayGainPopover) {
-                        ReplayGainPopoverView(player: player)
-                            .environmentObject(settings)
-                    }
-                    .help("ReplayGain normalisation")
-                    if !settings.audioUnitPluginChain.isEmpty {
-                        Button { showPluginChainPopover.toggle() } label: {
-                            Label("Plugins", systemImage: "puzzlepiece.fill")
-                        }
-                        .popover(isPresented: $showPluginChainPopover) {
-                            PluginChainPopoverView(player: player)
-                                .environmentObject(settings)
-                        }
-                        .help("Audio Unit plugin chain")
-                    }
-                }
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    settings.hidePlayed.toggle()
-                    let target = activeEntryID
-                        ?? setlist.entries.first(where: { $0.state != .played })?.id
-                    scrollTrigger = target
-                } label: {
-                    Label("Hide Played", systemImage: settings.hidePlayed ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                }
-                .disabled(setlist.entries.isEmpty)
-                .help(settings.hidePlayed ? "Show played tracks" : "Hide played tracks")
-            }
-            ToolbarItem(placement: .automatic) {
-                Button(role: .destructive) { showClearConfirmation = true } label: {
-                    Label("Clear Setlist", systemImage: "trash")
-                }
-                .disabled(setlist.entries.isEmpty)
-                .help("Clear all tracks from setlist")
-            }
-        }
-        .confirmationDialog(
-            "Clear Setlist?",
-            isPresented: $showClearConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clear", role: .destructive) { setlist.clear() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if isPlayerActive {
-                Text("Playback will stop and all tracks will be removed.")
-            } else {
-                Text("All tracks will be removed.")
-            }
-        }
-        .confirmationDialog(
-            deleteConfirmationTitle,
-            isPresented: Binding(
-                get: { pendingDeleteIDs != nil },
-                set: { if !$0 { pendingDeleteIDs = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if let ids = pendingDeleteIDs {
-                    setlist.remove(ids: ids)
-                    selectedIDs.subtract(ids)
-                    pendingDeleteIDs = nil
-                }
-            }
-            Button("Cancel", role: .cancel) { pendingDeleteIDs = nil }
-        }
-        .alert("Export to Apple Music", isPresented: $showExportDialog) {
-            TextField("Playlist name", text: $exportPlaylistName)
-            Button("Export") {
-                let trimmed = exportPlaylistName.trimmingCharacters(in: .whitespaces)
-                let name = trimmed.isEmpty ? Self.defaultExportName() : trimmed
-                let urls = setlist.entries.map(\.fileURL)
-                createAppleMusicPlaylist(name: name, fileURLs: urls) { result in
-                    if case .failure(let error) = result {
-                        exportErrorMessage = error.localizedDescription
-                        showExportError = true
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .alert("Export Failed", isPresented: $showExportError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(exportErrorMessage)
-        }
-        .alert("Last Tanda Not Configured", isPresented: $showLastTandaWarning) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Set the Last Tanda label text in Appearance Settings before marking a Last Tanda.")
-        }
     }
 
     private var deleteConfirmationTitle: String {
@@ -981,6 +988,20 @@ struct SetlistView: View {
                 }
             }
         }
+        // Performance: available for any non-fully-played track(s)
+        let performanceTargets = targets.filter { id in
+            guard let e = setlist.entries.first(where: { $0.id == id }) else { return false }
+            return e.state != .played || e.id == player.currentEntryID
+        }
+        if !performanceTargets.isEmpty {
+            let areAllPerformance = performanceTargets.allSatisfy { id in
+                setlist.entries.first(where: { $0.id == id })?.isPerformance ?? false
+            }
+            Divider()
+            Button(areAllPerformance ? "Remove Performance Mark" : "Mark as Performance") {
+                setlist.setPerformance(!areAllPerformance, for: performanceTargets)
+            }
+        }
         if !configStore.configurations.isEmpty {
             Divider()
             Menu("Apply Configuration") {
@@ -992,6 +1013,25 @@ struct SetlistView: View {
                     Button(config.name) {
                         setlist.setPluginConfiguration(config.id, for: targets)
                     }
+                }
+            }
+        }
+        Divider()
+        let singleEntry = targets.count == 1 ? setlist.entries.first(where: { targets.contains($0.id) }) : nil
+        let hasTag = singleEntry.map { $0.tagColor != TagColor.none } ?? targets.contains(where: { id in
+            setlist.entries.first(where: { $0.id == id })?.tagColor != TagColor.none
+        })
+        if hasTag {
+            Button("Clear Tag Colour") { setlist.setTagColor(.none, for: targets) }
+        }
+        ForEach(TagColor.allCases.filter { $0 != .none }, id: \.self) { colour in
+            Button {
+                setlist.setTagColor(colour, for: targets)
+            } label: {
+                Label {
+                    Text(colour.displayName)
+                } icon: {
+                    Image(nsImage: colour.menuCircleImage)
                 }
             }
         }
@@ -1025,7 +1065,8 @@ struct SetlistView: View {
                 albumArtist: e.track.albumArtist,
                 duration: e.duration,
                 isPlayed: e.state != .queued,
-                isLastTanda: e.isLastTanda
+                isLastTanda: e.isLastTanda,
+                isPerformance: e.isPerformance
             )
         }
         let report = SetlistReport(id: UUID(), name: name, exportDate: Date(), entries: entries)
@@ -1338,6 +1379,45 @@ private struct DoubleClickOverlay: NSViewRepresentable {
     }
 }
 
+// MARK: - Tag colour
+
+extension TagColor {
+    var swiftUIColor: Color? {
+        switch self {
+        case .none:   return nil
+        case .red:    return .red
+        case .orange: return .orange
+        case .yellow: return Color(red: 0.95, green: 0.80, blue: 0.0)
+        case .green:  return .green
+        case .blue:   return .blue
+        case .purple: return .purple
+        }
+    }
+
+    var menuCircleImage: NSImage {
+        let nsColor: NSColor
+        switch self {
+        case .none:   nsColor = .clear
+        case .red:    nsColor = .systemRed
+        case .orange: nsColor = .systemOrange
+        case .yellow: nsColor = NSColor(red: 0.95, green: 0.80, blue: 0.0, alpha: 1)
+        case .green:  nsColor = .systemGreen
+        case .blue:   nsColor = .systemBlue
+        case .purple: nsColor = .systemPurple
+        }
+        let size = CGFloat(13)
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            nsColor.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    var displayName: String { rawValue.capitalized }
+}
+
 // MARK: - Row
 
 struct SetlistRowView: View {
@@ -1368,6 +1448,11 @@ struct SetlistRowView: View {
     }
 
     var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(entry.tagColor.swiftUIColor ?? Color.clear)
+                .frame(width: 3)
+
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 stateIndicator
@@ -1413,6 +1498,16 @@ struct SetlistRowView: View {
                         .clipShape(Capsule())
                 }
 
+                if entry.isPerformance {
+                    Text("PERFORMANCE")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
                 if isStopAfter {
                     Image(systemName: "stop.circle")
                         .font(.system(size: 11))
@@ -1455,6 +1550,7 @@ struct SetlistRowView: View {
                     .padding(.leading, 22)
                     .padding(.bottom, 5)
             }
+        }
         }
         .contentShape(Rectangle())
         .listRowBackground(rowBackground)

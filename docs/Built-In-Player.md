@@ -68,6 +68,8 @@ Each row shows:
 | Stop marker | Small stop icon when "Stop After This Track" is set |
 | Auto-gap icon | Filled green wave = auto-gap silence applied before this track · Outlined grey wave = skipped or ignored |
 | Last Tanda flag | Red flag icon = this cortina is marked as the last tanda and will activate the Last Tanda label when it plays |
+| Tag colour dot | Coloured dot on the left edge of the row when a tag colour has been assigned (see [Track Tags](#track-tags) below) |
+| Performance badge | Small indicator when the track is marked as a performance track |
 | Progress bar | Appears beneath the currently-playing row: shows elapsed position, remaining time, the mark-as-played threshold marker, and the auto-fade marker (for cortinas when Auto-fade is enabled) |
 
 The setlist persists across app restarts — it is saved automatically to Application Support.
@@ -145,6 +147,8 @@ Right-click any row:
 | **Ignore Auto-gap before this Track** | Disables auto-gap for this track only. Shows as **Resume Auto-gap** when already set; click again to re-enable it. |
 | **Skip Auto-fade** | Disables auto-fade for this cortina track only, re-enabling the Fade & Stop and Fade & Continue buttons for manual control. Available only when Auto-fade is enabled and fading has not yet started. |
 | **Mark as Last Tanda** | Marks this cortina as the last tanda. TangoDisplay will automatically activate the Last Tanda label when this cortina starts and deactivate it when the next cortina begins. A red flag appears on the row. Shows as **Remove Last Tanda** when already set. Available only on cortina tracks. Requires Last Tanda label text to be configured in Appearance Settings. |
+| **Mark as Performance** | Marks this track as a guest performance track. When it plays, the dancer display switches to the custom Performance view instead of normal track info. Shows as **Remove Performance** when already set. See [Performance Tracks](#performance-tracks) below. |
+| **Tag Colour** | Opens a sub-menu to assign a colour dot (red, orange, yellow, green, blue, purple) to the row for visual organisation, or **Clear Tag Colour** to remove it. See [Track Tags](#track-tags) below. |
 
 > **Screenshot placeholder:** right-click context menu on a setlist row
 
@@ -321,6 +325,55 @@ The button is **disabled** when auto-gap is off (enable it first in **Settings �
 You can adjust the duration while a track is playing. The new value takes effect for the very next gap: the gap duration is read at the moment the current track ends, so any change you make during playback applies to the upcoming silence preroll. The setlist footer updates to reflect the new value in real time.
 
 > **Example:** Global gap is 4 s. While Track A plays, open the popover and drag to 2 s. The gap before Track B will be 2 s. Drag back to 4 s before Track C ends and subsequent gaps return to 4 s.
+
+---
+
+## Waveform Window
+
+Click the **Waveform button** (waveform path icon) in the Setlist toolbar to open a compact floating window showing the audio waveform of the currently playing track.
+
+The window displays:
+
+- **Waveform bars** — amplitude of the audio across the full track duration. Bars before the playhead are shown in the accent colour; bars after the playhead are dimmed.
+- **Playhead** — a red line that moves in real time to show elapsed position.
+- **Elapsed / total time** — shown at the left and right of the waveform.
+
+Waveform data is computed from the audio file when a track starts and cached so subsequent plays load instantly. The button is disabled when no track is playing.
+
+---
+
+## Track Tags
+
+Assign a colour tag to any track for visual organisation of your setlist. Right-click a row and choose **Tag Colour**, then pick from:
+
+**Red · Orange · Yellow · Green · Blue · Purple**
+
+A coloured dot appears on the left edge of the row. To remove it, right-click and choose **Clear Tag Colour**.
+
+Tags persist in the saved setlist — they survive app restarts and reload with the setlist. They have no effect on playback.
+
+---
+
+## Performance Tracks
+
+Mark a track as a **performance track** when a guest couple or performer will dance to it and you want the audience display to show something other than the normal track info.
+
+### Marking a Track
+
+Right-click any track and choose **Mark as Performance**. A small indicator appears on the row. Right-click again and choose **Remove Performance** to clear it.
+
+### What Happens on the Display
+
+When a performance track begins playing, the dancer display switches to the **Performance view** — a custom layout with a dedicated background image and DJ-configured text lines. The normal artist/title/genre display is hidden.
+
+Configure the Performance view in **Appearance Settings › Performance**:
+
+- **Background image** — a separate image shown only during performance tracks (independent of your profile's background image). An optional **Show during cortina** toggle also shows this background during the cortina that immediately precedes the performance.
+- **Text lines** — add up to any number of text lines, each with its own font, size, and colour. Text can include placeholders: `{title}`, `{artist}`, `{genre}`, `{year}` — replaced with the playing track's metadata at runtime. Each line has its own **Show during cortina** toggle to pre-announce the performance on the cortina screen.
+
+### Auto-Stop After Performance
+
+In **Settings › Player › Performance**, the **Stop after each performance track** toggle (on by default) automatically stops playback when a performance track finishes — giving you time to re-cue for the next performer before the music resumes.
 
 ---
 

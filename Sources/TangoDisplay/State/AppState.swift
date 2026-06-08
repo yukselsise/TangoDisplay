@@ -254,7 +254,7 @@ final class AppState: ObservableObject {
             // Deactivate if we're removing the marker from the active entry or during its tanda
             if let player = localPlayer, player.currentEntryID == id {
                 isLastTandaActive = false
-            } else if displayState.mode == .playing {
+            } else if displayState.mode == .playing || displayState.mode == .performance {
                 isLastTandaActive = false
             }
         }
@@ -441,12 +441,29 @@ final class AppState: ObservableObject {
             isLastTandaActive = true
         }
 
+        // Detect whether the first dance track after this cortina is a performance track
+        // (local player only — external players don't have per-entry isPerformance metadata).
+        var nextIsPerformance = false
+        if let player = localPlayer, let currentID = player.currentEntryID {
+            let entries = setlist.entries
+            if let currentIdx = entries.firstIndex(where: { $0.id == currentID }) {
+                for i in (currentIdx + 1)..<entries.count {
+                    let e = entries[i]
+                    if e.state == .played { continue }
+                    if detector.isCortina(genre: e.track.genre) { break }
+                    nextIsPerformance = e.isPerformance
+                    break
+                }
+            }
+        }
+
         displayState = DisplayState(
             mode: .cortina,
             currentTrack: track,
             nextTrack: nextTrack,
             tandaPosition: nil,
-            overrideText: nil
+            overrideText: nil,
+            nextTrackIsPerformance: nextIsPerformance
         )
         currentArtwork = nil
         displayedArtworkTrackID = nil
@@ -455,7 +472,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleDanceTrack(track: Track, detector: CortinaDetector) {
-        let comingFromPlaying = (displayState.mode == .playing)
+        let comingFromPlaying = (displayState.mode == .playing || displayState.mode == .performance)
         let comingFromCortina = (displayState.mode == .cortina)
 
         // If transitioning from cortina/idle, start fresh history
@@ -468,6 +485,16 @@ final class AppState: ObservableObject {
             trackHistory.append(track)
         }
 
+        // Determine whether the current entry is a performance track (local player only)
+        let isPerformanceTrack: Bool
+        if let player = localPlayer, let entryID = player.currentEntryID,
+           let entry = setlist.entries.first(where: { $0.id == entryID }) {
+            isPerformanceTrack = entry.isPerformance
+        } else {
+            isPerformanceTrack = false
+        }
+        let trackDisplayMode: DisplayMode = isPerformanceTrack ? .performance : .playing
+
         // If we transitioned from .playing or .cortina and the new track isn't in the
         // known playlist (different playlist loaded), reset history and fetch fresh
         // playlist data. Show "Track 1" immediately; handlePlaylistUpdate will update
@@ -477,13 +504,13 @@ final class AppState: ObservableObject {
             trackHistory = [track]
             activeSource.triggerPlaylistFetch()
             displayState = DisplayState(
-                mode: .playing,
+                mode: trackDisplayMode,
                 currentTrack: track,
                 nextTrack: nil,
                 tandaPosition: TandaPosition(current: 1, total: nil),
                 overrideText: nil
             )
-            fetchArtworkIfNeeded(for: track)
+            if !isPerformanceTrack { fetchArtworkIfNeeded(for: track) }
             return
         }
 
@@ -491,13 +518,13 @@ final class AppState: ObservableObject {
         let position = computeTandaPosition(track: track, detector: detector)
             ?? TandaPosition(current: max(1, trackHistory.count), total: nil)
         displayState = DisplayState(
-            mode: .playing,
+            mode: trackDisplayMode,
             currentTrack: track,
             nextTrack: nil,
             tandaPosition: position,
             overrideText: nil
         )
-        fetchArtworkIfNeeded(for: track)
+        if !isPerformanceTrack { fetchArtworkIfNeeded(for: track) }
     }
 
     private func updateTandaPositionQuietly(track: Track) {

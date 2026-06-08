@@ -192,11 +192,12 @@ final class RemoteControlBridge: NSObject, ObservableObject {
 
     private func displayModeString(_ mode: DisplayMode) -> String {
         switch mode {
-        case .playing:  return "playing"
-        case .cortina:  return "cortina"
-        case .idle:     return "idle"
-        case .paused:   return "paused"
-        case .override: return "override"
+        case .playing:      return "playing"
+        case .cortina:      return "cortina"
+        case .idle:         return "idle"
+        case .paused:       return "paused"
+        case .override:     return "override"
+        case .performance:  return "performance"
         }
     }
 

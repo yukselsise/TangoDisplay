@@ -652,9 +652,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
 
     func skipNext() {
         guard let id = currentEntryID else { play(); return }
-        let shouldStop = (id == setlist.stopAfterEntryID)
+        let finishedEntry = setlist.entries.first(where: { $0.id == id })
+        let stopForPerformance = (finishedEntry?.isPerformance == true) && settings.stopAfterEachPerformanceTrack
+        let shouldStop = (id == setlist.stopAfterEntryID) || stopForPerformance
         setlist.markPlayed(id: id)
-        if shouldStop { setlist.stopAfterEntryID = nil }
+        if id == setlist.stopAfterEntryID { setlist.stopAfterEntryID = nil }
         if !shouldStop, let next = setlist.firstUnplayed(after: id) {
             loadEntry(next)
             playerNode.play()
@@ -677,9 +679,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
 
     func skipNextImmediate() {
         guard let id = currentEntryID else { play(); return }
-        let shouldStop = (id == setlist.stopAfterEntryID)
+        let finishedEntry = setlist.entries.first(where: { $0.id == id })
+        let stopForPerformance = (finishedEntry?.isPerformance == true) && settings.stopAfterEachPerformanceTrack
+        let shouldStop = (id == setlist.stopAfterEntryID) || stopForPerformance
         setlist.markPlayed(id: id)
-        if shouldStop { setlist.stopAfterEntryID = nil }
+        if id == setlist.stopAfterEntryID { setlist.stopAfterEntryID = nil }
         if !shouldStop, let next = setlist.firstUnplayed(after: id) {
             loadEntry(next, bypassAutoGap: true)
             playerNode.play()

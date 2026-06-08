@@ -108,7 +108,8 @@ struct HTMLReportGenerator {
                 "genre": e.genre,
                 "year": e.year.map { String($0) } ?? "",
                 "duration": e.duration.map { formatDuration($0) } ?? "",
-                "played": e.isPlayed
+                "played": e.isPlayed,
+                "performance": e.isPerformance
             ]
         }
         let tableJSON = jsonString(tableRows)
@@ -382,10 +383,13 @@ struct HTMLReportGenerator {
               const played = r.played
                 ? '<span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-teal-500/20 text-teal-400 text-xs">✓</span>'
                 : '';
+              const perfBadge = r.performance
+                ? '<span style="font-size:9px;font-weight:600;color:#ef4444;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:99px;margin-left:5px;vertical-align:middle;">PERFORMANCE</span>'
+                : '';
               tr.innerHTML = `
                 <td class="px-4 py-2 text-slate-500 tabular-nums">${i + 1}</td>
                 ${setlistCell}
-                <td class="px-4 py-2 font-medium text-white max-w-[200px] truncate" title="${esc(r.title)}">${esc(r.title)}</td>
+                <td class="px-4 py-2 font-medium text-white max-w-[200px] truncate" title="${esc(r.title)}">${esc(r.title)}${perfBadge}</td>
                 <td class="px-4 py-2 max-w-[160px] truncate" title="${esc(r.artist)}">${esc(r.artist)}</td>
                 <td class="px-4 py-2"><span class="genre-tag">${esc(r.genre)}</span></td>
                 <td class="px-4 py-2 text-center tabular-nums text-slate-400">${esc(r.year)}</td>

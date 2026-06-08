@@ -16,4 +16,5 @@ struct SetlistReportEntry: Codable {
     let duration: TimeInterval?
     let isPlayed: Bool
     let isLastTanda: Bool
+    let isPerformance: Bool
 }

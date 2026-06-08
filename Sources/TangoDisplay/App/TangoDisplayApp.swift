@@ -54,6 +54,14 @@ struct TangoDisplayApp: App {
         }
         .defaultSize(width: 580, height: 530)
 
+        // Waveform window — shows amplitude waveform for the currently playing track
+        Window("Waveform", id: "waveform") {
+            WaveformWindowContent()
+                .environmentObject(appState)
+                .environmentObject(appState.settings)
+        }
+        .defaultSize(width: 700, height: 80)
+
         // Presentation window — WindowGroup allows dragging to external monitors
         WindowGroup(id: "presentation") {
             PresentationView()
