@@ -783,25 +783,25 @@ struct SetlistView: View {
         }
 
         let existingURLs = Set(setlist.entries.map(\.fileURL))
-        var fresh: [URL] = []
-        var duplicates: [URL] = []
-        for url in urls {
-            if existingURLs.contains(url) { duplicates.append(url) } else { fresh.append(url) }
+        guard urls.contains(where: { existingURLs.contains($0) }) else {
+            setlist.insertURLs(urls, before: anchorID)
+            return
         }
 
-        if !fresh.isEmpty { setlist.insertURLs(fresh, before: anchorID) }
-        guard !duplicates.isEmpty else { return }
-
+        let shouldAddDuplicates: Bool
         switch setlist.duplicateSessionDecision {
         case .alwaysAdd:
-            setlist.insertURLs(duplicates, before: anchorID)
+            shouldAddDuplicates = true
         case .neverAdd:
-            break
+            shouldAddDuplicates = false
         case nil:
             let (shouldAdd, remember) = promptForDuplicates()
             if remember { setlist.setDuplicateSessionDecision(shouldAdd ? .alwaysAdd : .neverAdd) }
-            if shouldAdd { setlist.insertURLs(duplicates, before: anchorID) }
+            shouldAddDuplicates = shouldAdd
         }
+
+        let toInsert = shouldAddDuplicates ? urls : urls.filter { !existingURLs.contains($0) }
+        if !toInsert.isEmpty { setlist.insertURLs(toInsert, before: anchorID) }
     }
 
     private func promptForDuplicates() -> (shouldAdd: Bool, remember: Bool) {
