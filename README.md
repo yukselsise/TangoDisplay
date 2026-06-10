@@ -49,7 +49,7 @@ A native macOS menu-bar app that shows a clean, fullscreen dancer display on an 
 ### Option A — Download pre-built app (easiest)
 
 1. Go to the [Releases](https://github.com/richardsladetdj-creator/TangoDisplay/releases) page
-2. Download `TangoDisplay-v3.25.2-universal.zip` (works on both Apple Silicon and Intel Macs)
+2. Download `TangoDisplay-v3.25.3-universal.zip` (works on both Apple Silicon and Intel Macs)
 3. Unzip and drag `TangoDisplay.app` to your `/Applications` folder
 4. **Right-click › Open** on first launch (required because the app is ad-hoc signed, not notarised)
 5. Grant the permissions macOS requests (see [Permissions](#permissions) below)
@@ -135,6 +135,9 @@ Key design decisions:
 ---
 
 ## Changelog
+
+### v3.25.3
+- **Fixed**: drag insert position now always respected when Duplicate Track Protection is enabled — previously, accepted duplicate tracks were appended to the end of the setlist instead of the drop position
 
 ### v3.25.2
 - **DJ Name**: show your name on the dancer display — configurable corner or centred position, with a "Show when" control (any track playing / idle & paused / always)

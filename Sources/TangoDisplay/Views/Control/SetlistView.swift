@@ -792,19 +792,15 @@ struct SetlistView: View {
         if !fresh.isEmpty { setlist.insertURLs(fresh, before: anchorID) }
         guard !duplicates.isEmpty else { return }
 
-        // Duplicates always append to end regardless of drop position.
-        // In-list drops (e.g. JRiver via .onInsert) carry a positional anchorID that
-        // could place duplicates at the top of the list — surprising since the
-        // duplicate dialog breaks any spatial intent from the original drop.
         switch setlist.duplicateSessionDecision {
         case .alwaysAdd:
-            setlist.insertURLs(duplicates, before: nil)
+            setlist.insertURLs(duplicates, before: anchorID)
         case .neverAdd:
             break
         case nil:
             let (shouldAdd, remember) = promptForDuplicates()
             if remember { setlist.setDuplicateSessionDecision(shouldAdd ? .alwaysAdd : .neverAdd) }
-            if shouldAdd { setlist.insertURLs(duplicates, before: nil) }
+            if shouldAdd { setlist.insertURLs(duplicates, before: anchorID) }
         }
     }
 
