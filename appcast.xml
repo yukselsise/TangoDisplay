@@ -4,6 +4,22 @@
         <title>TangoDisplay</title>
         <link>https://github.com/richardsladetdj-creator/TangoDisplay</link>
         <item>
+            <title>Version 3.26.1</title>
+            <pubDate>Mon, 15 Jun 2026 16:10:36 +0000</pubDate>
+            <sparkle:version>98</sparkle:version>
+            <sparkle:shortVersionString>3.26.1</sparkle:shortVersionString>
+            <description><![CDATA[
+                <ul>
+                    <li><strong>Fixed (Custom Text Lines)</strong>: deleting a custom line &mdash; especially immediately after adding it &mdash; could crash the app. The visibility and editor lists now use stable id-keyed bindings instead of array-index bindings, so deletes are safe regardless of timing.</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/richardsladetdj-creator/TangoDisplay/releases/download/v3.26.1/TangoDisplay-v3.26.1-universal.zip"
+                sparkle:edSignature="Pk0hSTQOPJ9NQog/YGNQRvBh6uM9A7Ld8DefXL2ay5jVZ+fpdjt/IgfZSbpxcIHhS8prkbLHQvdoDbsNmtEKCg=="
+                length="6509583"
+                type="application/zip"/>
+        </item>
+        <item>
             <title>Version 3.26.0</title>
             <pubDate>Mon, 15 Jun 2026 13:42:25 +0000</pubDate>
             <sparkle:version>97</sparkle:version>
