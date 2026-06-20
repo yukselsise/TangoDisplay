@@ -9,7 +9,15 @@ git diff --name-only HEAD -- 'docs/*.md'
 
 If no docs have changed, report that and stop — nothing to sync.
 
-## Step 2 — Ensure the wiki is cloned
+## Step 2 — Commit and push the main repo's doc changes
+
+```bash
+git add docs/*.md && \
+git commit -m "<brief summary of doc changes>" && \
+git push
+```
+
+## Step 3 — Ensure the wiki is cloned
 
 ```bash
 ls /Users/richardslade/SourceCode/TangoDisplay.wiki 2>/dev/null || echo "not cloned"
@@ -20,14 +28,14 @@ If not cloned:
 git clone https://github.com/richardsladetdj-creator/TangoDisplay.wiki.git /Users/richardslade/SourceCode/TangoDisplay.wiki
 ```
 
-## Step 3 — Copy updated docs
+## Step 4 — Copy updated docs
 
 Copy each changed `docs/*.md` file into the wiki directory. Example:
 ```bash
 cp docs/Built-In-Player.md /Users/richardslade/SourceCode/TangoDisplay.wiki/
 ```
 
-## Step 4 — Commit and push the wiki
+## Step 5 — Commit and push the wiki
 
 ```bash
 cd /Users/richardslade/SourceCode/TangoDisplay.wiki && \
@@ -36,6 +44,6 @@ git commit -m "<brief summary of doc changes>" && \
 git push
 ```
 
-## Step 5 — Report
+## Step 6 — Report
 
 Confirm which files were synced and the wiki commit hash.
