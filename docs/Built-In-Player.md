@@ -171,6 +171,8 @@ Click the **Clear Setlist** button in the toolbar. This removes all tracks and r
 
 Click the **filter button** (three-line funnel icon) in the Setlist toolbar to hide all fully-played tracks. The current or next-to-play track is always visible — it won't disappear even if it has been early-marked as played. The list scrolls to the active track automatically when you toggle the filter.
 
+While the filter is active, a banner at the top of the list shows how many played tracks are currently hidden.
+
 Click the button again to restore the full track list and scroll the current track back into view.
 
 The hide-played setting is remembered across sessions.

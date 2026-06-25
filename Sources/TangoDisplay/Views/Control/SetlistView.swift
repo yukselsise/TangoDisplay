@@ -551,6 +551,21 @@ struct SetlistView: View {
             let visibleEntries = settings.hidePlayed
                 ? setlist.entries.filter { $0.state != .played || $0.id == activeEntryID }
                 : setlist.entries
+            let hiddenCount = setlist.entries.count - visibleEntries.count
+            if settings.hidePlayed && hiddenCount > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .font(.system(size: 11))
+                    Text("^[\(hiddenCount) played track](inflect: true) hidden")
+                        .font(.system(size: 11))
+                    Spacer()
+                }
+                .foregroundColor(.blue)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.blue.opacity(0.1))
+                Divider()
+            }
             if visibleEntries.isEmpty {
                 emptyDropZone
             } else {
