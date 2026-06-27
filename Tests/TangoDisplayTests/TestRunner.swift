@@ -1057,6 +1057,39 @@ func runSmartAutoGapTests() {
             try expectEqual(SmartAutoGap.injectedDuration(target: .infinity, trailing: 1, leading: 1), 0)
         }
     }
+
+    suite("SmartAutoGap — intrinsic silence measurement") {
+        test("measures leading and trailing silent blocks") {
+            let result = SmartAutoGap.measureSilence(
+                samples: [Array(repeating: 0, count: 20) + Array(repeating: 1, count: 30) + Array(repeating: 0, count: 10)],
+                sampleRate: 1_000
+            )
+            try expectEqual(result, IntrinsicSilence(leading: 0.02, trailing: 0.01))
+        }
+        test("continuous tone has no intrinsic silence") {
+            try expectEqual(SmartAutoGap.measureSilence(samples: [Array(repeating: 1, count: 30)], sampleRate: 1_000), .zero)
+        }
+        test("all-silent audio is counted once") {
+            let result = SmartAutoGap.measureSilence(samples: [Array(repeating: 0, count: 30)], sampleRate: 1_000)
+            try expectEqual(result, IntrinsicSilence(leading: 0.03, trailing: 0))
+        }
+        test("an audible sample in either stereo channel breaks silence") {
+            let result = SmartAutoGap.measureSilence(
+                samples: [Array(repeating: 0, count: 20), Array(repeating: 0, count: 10) + Array(repeating: 1, count: 10)],
+                sampleRate: 1_000
+            )
+            try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
+        test("threshold value is inclusively silent") {
+            let threshold = Float(4.0 / 255.0)
+            let result = SmartAutoGap.measureSilence(samples: [Array(repeating: threshold, count: 10) + Array(repeating: 1, count: 10)], sampleRate: 1_000)
+            try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
+        test("partial final blocks use their actual frame duration") {
+            let result = SmartAutoGap.measureSilence(samples: [Array(repeating: 1, count: 10) + Array(repeating: 0, count: 5)], sampleRate: 1_000)
+            try expectEqual(result, IntrinsicSilence(leading: 0, trailing: 0.005))
+        }
+    }
 }
 
 // MARK: - Main entry point
