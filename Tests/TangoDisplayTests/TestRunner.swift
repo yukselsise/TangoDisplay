@@ -1036,6 +1036,29 @@ func runAudioUnitPluginTests() {
     }
 }
 
+// MARK: - SmartAutoGap tests
+
+func runSmartAutoGapTests() {
+    suite("SmartAutoGap — exact injected duration") {
+        test("subtracts trailing and leading silence from target") {
+            try expectEqual(SmartAutoGap.injectedDuration(target: 5, trailing: 1, leading: 1), 3)
+        }
+        test("returns zero when intrinsic silence equals target") {
+            try expectEqual(SmartAutoGap.injectedDuration(target: 5, trailing: 2, leading: 3), 0)
+        }
+        test("returns zero when intrinsic silence exceeds target") {
+            try expectEqual(SmartAutoGap.injectedDuration(target: 5, trailing: 3, leading: 4), 0)
+        }
+        test("returns target when there is no intrinsic silence") {
+            try expectEqual(SmartAutoGap.injectedDuration(target: 5, trailing: 0, leading: 0), 5)
+        }
+        test("handles invalid inputs safely") {
+            try expectEqual(SmartAutoGap.injectedDuration(target: 5, trailing: .nan, leading: 1), 4)
+            try expectEqual(SmartAutoGap.injectedDuration(target: .infinity, trailing: 1, leading: 1), 0)
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runCortinaDetectorTests()
@@ -1045,6 +1068,7 @@ runDisplayStateTests()
 runReplayGainTests()
 runAutoReplayGainTests()
 runAudioUnitPluginTests()
+runSmartAutoGapTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"
