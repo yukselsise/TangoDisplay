@@ -10,6 +10,25 @@ public struct IntrinsicSilence: Equatable, Sendable {
     public static let zero = IntrinsicSilence(leading: 0, trailing: 0)
 }
 
+public struct PreparedAutoGap<ID: Equatable & Sendable>: Equatable, Sendable {
+    public let currentID: ID
+    public let nextID: ID
+    public let trailing: Double
+    public let leading: Double
+
+    public init(currentID: ID, nextID: ID, trailing: Double, leading: Double) {
+        self.currentID = currentID
+        self.nextID = nextID
+        self.trailing = trailing
+        self.leading = leading
+    }
+
+    public func injectedDuration(currentID: ID, nextID: ID, target: Double) -> Double? {
+        guard self.currentID == currentID, self.nextID == nextID else { return nil }
+        return SmartAutoGap.injectedDuration(target: target, trailing: trailing, leading: leading)
+    }
+}
+
 public enum SmartAutoGap {
     /// Measures consecutive silent blocks at the beginning and end of PCM samples.
     /// Unequal channel arrays are measured only through their shortest shared frame count.

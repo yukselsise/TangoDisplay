@@ -125,8 +125,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     // MARK: - Private — auto-gap
 
     private var currentPaddingFrames: AVAudioFrameCount = 0
-    private var prevTrackSilenceAtEnd: Double = 0   // populated by background analysis of the track that just played
-    private var nextTrackSilenceAtStart: Double = 0 // populated by background analysis of the upcoming track
+    private var preparedAutoGap: PreparedAutoGap<UUID>?
+    private var autoGapAnalysisTask: Task<Void, Never>?
     private var audioStartSampleTime: AVAudioFramePosition = 0
     private var silencePending: Bool = false
 
@@ -183,6 +183,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     @objc private func handleEngineConfigChange() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.cancelAutoGapPreparation()
             // Invalidate any pending dataPlayedBack callbacks so the system-forced engine stop
             // (e.g. headphone removal on System Default) doesn't spuriously fire handleTrackEnd → skipNext().
             self.scheduleGeneration += 1
@@ -536,6 +537,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     }
 
     func stop() {
+        cancelAutoGapPreparation()
         for runtime in slotRuntimes.values {
             runtime.loadTask?.cancel()
             runtime.loadTask = nil
@@ -558,8 +560,6 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         currentPaddingFrames = 0
         silencePending = false
         audioStartSampleTime = 0
-        prevTrackSilenceAtEnd = 0
-        nextTrackSilenceAtStart = 0
         teardownObservers()
     }
 
@@ -626,6 +626,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     }
 
     func pause() {
+        cancelPendingAutoGapBuffer()
         scheduleGeneration += 1
         playerNode.stop()
         isActivePlaying = false
@@ -656,6 +657,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     }
 
     func stopTrack() {
+        cancelAutoGapPreparation()
         if let id = currentEntryID, !earlyMarkedEntryIDs.contains(id), !currentEntryIsPlayed() {
             setlist.markQueued(id: id)
         }
@@ -672,8 +674,6 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         currentPaddingFrames = 0
         silencePending = false
         audioStartSampleTime = 0
-        prevTrackSilenceAtEnd = 0
-        nextTrackSilenceAtStart = 0
         reportCurrentState()
         reportPlaylist()
         onNextTrackUpdate?(nil)
@@ -768,6 +768,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     // MARK: - Private: seek implementation
 
     private func seekTo(_ seconds: Double, completion: (() -> Void)? = nil) {
+        cancelPendingAutoGapBuffer()
         guard let file = audioFile else { completion?(); return }
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(max(0, seconds) * sampleRate)
@@ -794,6 +795,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     // MARK: - Private: entry loading
 
     private func loadEntry(_ entry: SetlistEntry, bypassAutoGap: Bool = false) {
+        cancelAutoGapPreparation()
         earlyMarkedEntryIDs.remove(entry.id)
         isCurrentEntryMarkedAsPlayed = false
         playerNode.stop()
@@ -819,79 +821,53 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 preAnalyseIfNeeded(nextEntry)
             }
 
-            // Auto-gap: schedule silence before the file if needed.
-            // nextTrackSilenceAtStart is pre-populated by the background analysis from the previous track's loadEntry.
             currentPaddingFrames = 0
             silencePending = false
             audioStartSampleTime = 0
             let isFirstTrack = setlist.entries.first?.id == entry.id
                 && !setlist.entries.contains(where: { $0.state == .played })
-            var autoGapApplied = false
             var autoGapSkipped = false
+            var initialAutoGapApplied = false
             if !bypassAutoGap && !entry.ignoresAutoGap && settings.autoGapEnabled {
                 if settings.autoGapIgnoreFirstTrack && isFirstTrack {
                     autoGapSkipped = true
-                } else {
-                    let padding = computeAutoGapPadding(
-                        prevSilenceAtEnd: prevTrackSilenceAtEnd,
-                        nextSilenceAtStart: nextTrackSilenceAtStart,
-                        minimumSilence: settings.autoGapDuration
-                    )
-                    if padding > 0 {
-                        let frames = AVAudioFrameCount(padding * file.fileFormat.sampleRate)
-                        silencePending = true
-                        let entryID = entry.id
-                        playerNode.scheduleBuffer(
-                            makeSilenceBuffer(format: file.processingFormat, frameCount: frames),
-                            completionCallbackType: .dataConsumed
-                        ) { [weak self] _ in
-                            DispatchQueue.main.async {
-                                guard let self,
-                                      let nodeTime = self.playerNode.lastRenderTime,
-                                      nodeTime.isSampleTimeValid,
-                                      let pt = self.playerNode.playerTime(forNodeTime: nodeTime) else { return }
-                                self.audioStartSampleTime = pt.sampleTime
-                                self.silencePending = false
-                                self.setlist.setAutoGapApplied(id: entryID, applied: false)
+                } else if isFirstTrack {
+                    // Preserve the existing first-track lead-in without delaying playback on
+                    // asynchronous file analysis. Pair transitions below use measured silence.
+                    let frameValue = (settings.autoGapDuration * file.processingFormat.sampleRate).rounded()
+                    if frameValue.isFinite, frameValue > 0, frameValue <= Double(UInt32.max) {
+                        let frames = AVAudioFrameCount(frameValue)
+                        if let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) {
+                            buffer.frameLength = frames
+                            currentPaddingFrames = frames
+                            silencePending = true
+                            initialAutoGapApplied = true
+                            playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                                DispatchQueue.main.async {
+                                    guard let self, self.scheduleGeneration == gen else { return }
+                                    self.currentPaddingFrames = 0
+                                    self.silencePending = false
+                                    self.setlist.setAutoGapApplied(id: entry.id, applied: false)
+                                }
                             }
                         }
-                        currentPaddingFrames = frames
-                        autoGapApplied = true
                     }
                 }
             }
-            setlist.setAutoGapApplied(id: entry.id, applied: autoGapApplied)
+            setlist.setAutoGapApplied(id: entry.id, applied: initialAutoGapApplied)
             setlist.setAutoGapSkipped(id: entry.id, skipped: autoGapSkipped)
-            prevTrackSilenceAtEnd = 0
-            nextTrackSilenceAtStart = 0
 
             playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 DispatchQueue.main.async { self?.handleTrackEnd(generation: gen) }
             }
 
-            // Analyze current track's end-silence and pre-warm next track's start-silence in background.
-            let currentURL = entry.fileURL
-            let nextURL = setlist.entry(after: entry.id)?.fileURL
-            Task { [weak self] in
-                let result = await AudioSilenceAnalyzer.shared.analyze(url: currentURL)
-                let nextStart: Double
-                if let nextURL {
-                    let nextResult = await AudioSilenceAnalyzer.shared.analyze(url: nextURL)
-                    nextStart = nextResult.silenceAtStart
-                } else {
-                    nextStart = 0
-                }
-                await MainActor.run { [weak self] in
-                    self?.prevTrackSilenceAtEnd = result.silenceAtEnd
-                    self?.nextTrackSilenceAtStart = nextStart
-                }
-            }
         } catch {
             os_log(.error, "TangoDisplay: failed to load %{public}@: %{public}@",
                    entry.fileURL.path, error.localizedDescription)
             audioFile = nil
         }
         currentEntryID = entry.id
+        prepareAutoGap(current: entry)
         setlist.markPlaying(id: entry.id)
         let resolvedConfigID = entry.pluginConfigurationID ?? configStore.defaultConfigurationID
         if let configID = resolvedConfigID, let config = configStore.configuration(id: configID) {
@@ -914,25 +890,99 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     }
 
     private func handleTrackEnd(generation: Int) {
-        guard generation == scheduleGeneration else { return }
-        skipNext()
+        guard generation == scheduleGeneration,
+              let currentID = currentEntryID,
+              let current = setlist.entries.first(where: { $0.id == currentID }) else { return }
+        let stopForPerformance = current.isPerformance && settings.stopAfterEachPerformanceTrack
+        guard currentID != setlist.stopAfterEntryID, !stopForPerformance,
+              let next = setlist.firstUnplayed(after: currentID) else {
+            skipNextImmediate()
+            return
+        }
+        advanceAutomatically(from: current, to: next)
     }
 
-    private func computeAutoGapPadding(
-        prevSilenceAtEnd: Double,
-        nextSilenceAtStart: Double,
-        minimumSilence: Double
-    ) -> Double {
-        guard minimumSilence > 0 else { return 0 }
-        let existing = prevSilenceAtEnd + nextSilenceAtStart
-        return max(0, minimumSilence - existing)
+    private func prepareAutoGap(current: SetlistEntry) {
+        autoGapAnalysisTask?.cancel()
+        preparedAutoGap = nil
+        guard let next = setlist.firstUnplayed(after: current.id) else { return }
+        let currentID = current.id
+        let nextID = next.id
+        autoGapAnalysisTask = Task { [weak self] in
+            let currentSilence = await AudioSilenceAnalyzer.shared.analyze(url: current.fileURL)
+            guard !Task.isCancelled else { return }
+            let nextSilence = await AudioSilenceAnalyzer.shared.analyze(url: next.fileURL)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.currentEntryID == currentID,
+                      self.setlist.firstUnplayed(after: currentID)?.id == nextID else { return }
+                self.preparedAutoGap = PreparedAutoGap(
+                    currentID: currentID, nextID: nextID,
+                    trailing: currentSilence.trailing, leading: nextSilence.leading
+                )
+            }
+        }
     }
 
-    private func makeSilenceBuffer(format: AVAudioFormat, frameCount: AVAudioFrameCount) -> AVAudioPCMBuffer {
-        // AVAudioPCMBuffer is zero-initialized, so this is already silent.
-        let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
-        buf.frameLength = frameCount
-        return buf
+    private func advanceAutomatically(from current: SetlistEntry, to next: SetlistEntry) {
+        let padding: Double
+        if !settings.autoGapEnabled || next.ignoresAutoGap {
+            padding = 0
+        } else {
+            padding = preparedAutoGap?.injectedDuration(
+                currentID: current.id, nextID: next.id, target: settings.autoGapDuration
+            ) ?? settings.autoGapDuration
+        }
+        guard padding > 0 else { skipNextImmediate(); return }
+        scheduleAutoGap(seconds: padding, nextEntryID: next.id)
+    }
+
+    private func scheduleAutoGap(seconds: Double, nextEntryID: UUID) {
+        scheduleGeneration += 1
+        let generation = scheduleGeneration
+        guard let format = audioFile?.processingFormat else { skipNextImmediate(); return }
+        let frameValue = (seconds * format.sampleRate).rounded()
+        guard frameValue.isFinite, frameValue > 0, frameValue <= Double(UInt32.max) else {
+            skipNextImmediate(); return
+        }
+        let frames = AVAudioFrameCount(frameValue)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+            skipNextImmediate(); return
+        }
+        buffer.frameLength = frames
+        currentPaddingFrames = frames
+        silencePending = true
+        setlist.setAutoGapApplied(id: nextEntryID, applied: true)
+        playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.scheduleGeneration == generation else { return }
+                self.currentPaddingFrames = 0
+                self.silencePending = false
+                self.setlist.setAutoGapApplied(id: nextEntryID, applied: false)
+                self.skipNextImmediate()
+            }
+        }
+        if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    private func cancelPendingAutoGapBuffer() {
+        if silencePending {
+            if let nextID = preparedAutoGap?.nextID {
+                setlist.setAutoGapApplied(id: nextID, applied: false)
+            }
+            if let currentEntryID {
+                setlist.setAutoGapApplied(id: currentEntryID, applied: false)
+            }
+        }
+        currentPaddingFrames = 0
+        silencePending = false
+    }
+
+    private func cancelAutoGapPreparation() {
+        autoGapAnalysisTask?.cancel()
+        autoGapAnalysisTask = nil
+        cancelPendingAutoGapBuffer()
+        preparedAutoGap = nil
     }
 
     private func currentEntryIsPlayed() -> Bool {

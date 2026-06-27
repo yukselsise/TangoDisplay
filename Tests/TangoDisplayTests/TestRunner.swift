@@ -1117,6 +1117,17 @@ func runSmartAutoGapTests() {
             try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
         }
     }
+
+    suite("SmartAutoGap — prepared pair identity") {
+        test("matching pair calculates the exact injected gap") {
+            let prepared = PreparedAutoGap(currentID: "A", nextID: "B", trailing: 1, leading: 1)
+            try expectEqual(prepared.injectedDuration(currentID: "A", nextID: "B", target: 5), 3)
+        }
+        test("reordered next entry rejects stale analysis") {
+            let prepared = PreparedAutoGap(currentID: "A", nextID: "B", trailing: 1, leading: 1)
+            try expectEqual(prepared.injectedDuration(currentID: "A", nextID: "C", target: 5), nil)
+        }
+    }
 }
 
 // MARK: - Main entry point
