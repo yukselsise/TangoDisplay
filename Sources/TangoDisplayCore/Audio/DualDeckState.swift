@@ -5,6 +5,12 @@ public enum DeckID: String, CaseIterable, Sendable {
     public var other: DeckID { self == .a ? .b : .a }
 }
 
+public enum DualDeckGeneration: Sendable {
+    public static func next(after generation: UInt64) -> UInt64? {
+        generation == .max ? nil : generation + 1
+    }
+}
+
 public enum DeckPhase: Sendable, Equatable {
     case empty
     case preparing
@@ -100,7 +106,7 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
     ) -> DeckPreparationToken<ID>? {
         guard automaticTransitionAllowed, deck != activeDeck else { return nil }
         let generation = nextPreparationGeneration
-        nextPreparationGeneration &+= 1
+        nextPreparationGeneration = checkedNext(after: generation)
         decks[index(of: deck)] = DeckSnapshot(phase: .preparing, entryID: entryID, generation: generation)
         committedTransition = nil
         return DeckPreparationToken(deck: deck, entryID: entryID, generation: generation)
@@ -127,7 +133,7 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
               next.phase == .ready,
               next.entryID == nextID else { return nil }
         let transitionGeneration = nextTransitionGeneration
-        nextTransitionGeneration &+= 1
+        nextTransitionGeneration = checkedNext(after: transitionGeneration)
         let token = DualDeckTransition(
             outgoingDeck: outgoing,
             incomingDeck: incoming,
@@ -141,10 +147,6 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
         decks[index(of: incoming)].phase = .scheduled
         committedTransition = token
         return token
-    }
-
-    public mutating func promote(_ token: DualDeckTransition<ID>) -> DeckID? {
-        promote(token, settingsRevision: token.settingsRevision)
     }
 
     public mutating func promote(_ token: DualDeckTransition<ID>, settingsRevision: UInt64) -> DeckID? {
@@ -182,7 +184,7 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
     }
 
     public mutating func reset(deck: DeckID) {
-        let invalidatedGeneration = self[deck].generation &+ 1
+        let invalidatedGeneration = checkedNext(after: self[deck].generation)
         decks[index(of: deck)] = DeckSnapshot(generation: invalidatedGeneration)
         if activeDeck == deck { activeDeck = nil }
         committedTransition = nil
@@ -197,7 +199,7 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
         reset(deck: .b)
         activeDeck = nil
         committedTransition = nil
-        nextTransitionGeneration &+= 1
+        nextTransitionGeneration = checkedNext(after: nextTransitionGeneration)
     }
 
     @discardableResult
@@ -215,4 +217,10 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
 
     private func index(of deck: DeckID) -> Int { deck == .a ? 0 : 1 }
     private func deck(at index: Int) -> DeckID { index == 0 ? .a : .b }
+    private func checkedNext(after generation: UInt64) -> UInt64 {
+        guard let next = DualDeckGeneration.next(after: generation) else {
+            preconditionFailure("Dual-deck generation exhausted")
+        }
+        return next
+    }
 }

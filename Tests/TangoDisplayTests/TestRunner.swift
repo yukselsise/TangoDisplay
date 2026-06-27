@@ -1200,7 +1200,7 @@ func runDualDeckStateTests() {
             let preparation = state.beginPreparation(deck: .b, entryID: "next")!
             _ = state.markReady(preparation)
             let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
-            try expectEqual(state.promote(token), .b)
+            try expectEqual(state.promote(token, settingsRevision: 4), .b)
             try expectEqual(state.activeDeck, .b)
             try expectEqual(state[.b].phase, .active)
             try expectEqual(state[.a].phase, .recycling)
@@ -1239,13 +1239,13 @@ func runDualDeckStateTests() {
             let firstPreparation = state.beginPreparation(deck: .b, entryID: "two")!
             _ = state.markReady(firstPreparation)
             let first = state.commitTransition(currentID: "one", nextID: "two", settingsRevision: 1)!
-            try expectEqual(state.promote(first), .b)
+            try expectEqual(state.promote(first, settingsRevision: 1), .b)
             state.reset(deck: .a)
             let secondPreparation = state.beginPreparation(deck: .a, entryID: "three")!
             _ = state.markReady(secondPreparation)
             let second = state.commitTransition(currentID: "two", nextID: "three", settingsRevision: 1)!
             try expect(second.generation != first.generation)
-            try expectEqual(state.promote(second), .a)
+            try expectEqual(state.promote(second, settingsRevision: 1), .a)
         }
         test("settings mismatch cancels schedule restores ready and permits recommit") {
             var state = DualDeckState<String>()
@@ -1299,6 +1299,10 @@ func runDualDeckStateTests() {
             try expect(!state.markReady(old))
             try expectEqual(state[.b].phase, .preparing)
             try expect(state.markReady(fresh))
+        }
+        test("generation advancement reports exhaustion instead of wrapping") {
+            try expectEqual(DualDeckGeneration.next(after: 41), 42)
+            try expectNil(DualDeckGeneration.next(after: .max))
         }
     }
 }
