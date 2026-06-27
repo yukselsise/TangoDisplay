@@ -1070,7 +1070,9 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             else { return nil }
             return PluginSlotState(
                 slotID: slot.id,
+                componentType: slot.selection.componentType,
                 componentSubType: slot.selection.componentSubType,
+                componentManufacturer: slot.selection.componentManufacturer,
                 auState: encoded,
                 isEnabled: slot.isEnabled
             )

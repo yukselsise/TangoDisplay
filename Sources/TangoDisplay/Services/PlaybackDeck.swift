@@ -9,6 +9,7 @@ enum PlaybackDeckError: LocalizedError {
     case stalePreparation
     case invalidStartingFrame
     case graphConnectionFailed(String)
+    case graphMutationFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -17,6 +18,7 @@ enum PlaybackDeckError: LocalizedError {
         case .stalePreparation: return "Playback deck preparation was superseded."
         case .invalidStartingFrame: return "The requested starting frame is outside the audio file."
         case .graphConnectionFailed(let reason): return "Playback deck graph connection failed: \(reason)"
+        case .graphMutationFailed(let reason): return "Playback deck graph mutation failed: \(reason)"
         }
     }
 }
@@ -45,6 +47,12 @@ final class PlaybackDeck {
     private let pluginManager: AudioUnitPluginManager
     private var pluginSlots: [AudioUnitChainSlot]
     private var preparationTask: Task<Void, Error>?
+    private var attachedOwnedNodes: [AVAudioNode] = []
+
+    private struct OpenedAudioFile: @unchecked Sendable {
+        let file: AVAudioFile
+        let format: AVAudioFormat
+    }
 
     init(
         id: DeckID,
@@ -61,13 +69,24 @@ final class PlaybackDeck {
         pluginSlots = slots
     }
 
-    func attach(to engine: AVAudioEngine) {
+    func attach(to engine: AVAudioEngine) throws {
         guard self.engine !== engine else { return }
         if let oldEngine = self.engine {
             detachOwnedNodes(from: oldEngine)
         }
         self.engine = engine
-        [playerNode, eq, replayGainMixer, outputMixer].forEach { engine.attach($0) }
+        attachedOwnedNodes.removeAll()
+        do {
+            for node in [playerNode, eq, replayGainMixer, outputMixer] {
+                try safeAttach(engine, node)
+                attachedOwnedNodes.append(node)
+            }
+        } catch {
+            attachedOwnedNodes.reversed().forEach { safeDetach(engine, $0) }
+            attachedOwnedNodes.removeAll()
+            self.engine = nil
+            throw error
+        }
     }
 
     func prepare(
@@ -84,7 +103,11 @@ final class PlaybackDeck {
         let url = entry.fileURL
 
         let task = Task<Void, Error> {
-            let file = try AVAudioFile(forReading: url)
+            let opened = try await Self.openAudioFile(at: url)
+            try Task.checkCancellation()
+            guard self.generation == requestedGeneration else {
+                throw PlaybackDeckError.stalePreparation
+            }
             let runtimes = try await manager.instantiateDeckChain(
                 slots: slots,
                 configuration: configuration
@@ -99,12 +122,12 @@ final class PlaybackDeck {
             var attached: [AudioUnitPluginManager.DeckPluginRuntime] = []
             do {
                 for runtime in runtimes {
-                    engine.attach(runtime.unit)
+                    try self.safeAttach(engine, runtime.unit)
                     attached.append(runtime)
                 }
                 try self.connectGraph(
                     in: engine,
-                    format: file.processingFormat,
+                    format: opened.format,
                     plugins: runtimes
                 )
             } catch {
@@ -112,8 +135,8 @@ final class PlaybackDeck {
                 throw error
             }
 
-            self.audioFile = file
-            self.processingFormat = file.processingFormat
+            self.audioFile = opened.file
+            self.processingFormat = opened.format
             self.entryID = entry.id
             self.pluginRuntimes = runtimes
             self.pluginConfigurationID = configuration?.id
@@ -226,6 +249,25 @@ final class PlaybackDeck {
         }
     }
 
+    private nonisolated static func openAudioFile(at url: URL) async throws -> OpenedAudioFile {
+        try await Task.detached(priority: .userInitiated) {
+            let file = try AVAudioFile(forReading: url)
+            return OpenedAudioFile(file: file, format: file.processingFormat)
+        }.value
+    }
+
+    private func safeAttach(_ engine: AVAudioEngine, _ node: AVAudioNode) throws {
+        var reason: NSString?
+        guard TDTryAudioEngineAttach(engine, node, &reason) else {
+            throw PlaybackDeckError.graphMutationFailed((reason as String?) ?? "NSException during attach")
+        }
+    }
+
+    private func safeDetach(_ engine: AVAudioEngine, _ node: AVAudioNode) {
+        var reason: NSString?
+        _ = TDTryAudioEngineDetach(engine, node, &reason)
+    }
+
     private func rollbackPreparation(
         in engine: AVAudioEngine,
         attachedPlugins: [AudioUnitPluginManager.DeckPluginRuntime]
@@ -233,7 +275,7 @@ final class PlaybackDeck {
         disconnectGraph(from: engine)
         for runtime in attachedPlugins {
             engine.disconnectNodeOutput(runtime.unit)
-            engine.detach(runtime.unit)
+            safeDetach(engine, runtime.unit)
         }
         pluginRuntimes.removeAll()
         clearPreparedIdentity()
@@ -250,14 +292,15 @@ final class PlaybackDeck {
     }
 
     private func detachPlugins(from engine: AVAudioEngine) {
-        pluginRuntimes.forEach { engine.detach($0.unit) }
+        pluginRuntimes.forEach { safeDetach(engine, $0.unit) }
         pluginRuntimes.removeAll()
     }
 
     private func detachOwnedNodes(from engine: AVAudioEngine) {
         disconnectGraph(from: engine)
         detachPlugins(from: engine)
-        [playerNode, eq, replayGainMixer, outputMixer].forEach { engine.detach($0) }
+        attachedOwnedNodes.reversed().forEach { safeDetach(engine, $0) }
+        attachedOwnedNodes.removeAll()
     }
 
     private func clearPreparedIdentity() {

@@ -7,3 +7,5 @@ BOOL TDTryAudioEngineConnect(AVAudioEngine *engine,
                               AVAudioNode   *destination,
                               AVAudioFormat *format,
                               NSString     **outReason);
+BOOL TDTryAudioEngineAttach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason);
+BOOL TDTryAudioEngineDetach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason);

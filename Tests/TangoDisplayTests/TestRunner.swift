@@ -970,6 +970,31 @@ func runAudioUnitPluginTests() {
                                              componentType: 1, componentSubType: 2, componentManufacturer: 3)
             try expect(a != b)
         }
+
+        test("plugin slot state persists full component identity") {
+            let state = PluginSlotState(
+                slotID: UUID(), componentType: 11, componentSubType: 22,
+                componentManufacturer: 33, auState: "state", isEnabled: true
+            )
+            let decoded = try JSONDecoder().decode(
+                PluginSlotState.self,
+                from: JSONEncoder().encode(state)
+            )
+            try expectEqual(decoded.componentType, 11)
+            try expectEqual(decoded.componentSubType, 22)
+            try expectEqual(decoded.componentManufacturer, 33)
+        }
+
+        test("legacy plugin slot state remains decodable") {
+            let id = UUID()
+            let json = """
+            {"slotID":"\(id.uuidString)","componentSubType":22,"auState":"state","isEnabled":true}
+            """.data(using: .utf8)!
+            let decoded = try JSONDecoder().decode(PluginSlotState.self, from: json)
+            try expectEqual(decoded.slotID, id)
+            try expectNil(decoded.componentType)
+            try expectNil(decoded.componentManufacturer)
+        }
     }
 
     suite("AudioUnitPluginStatus — display text") {

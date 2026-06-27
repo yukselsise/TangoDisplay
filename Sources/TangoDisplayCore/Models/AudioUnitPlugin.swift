@@ -71,13 +71,18 @@ public struct AudioUnitChainSlot: Codable, Equatable, Identifiable {
 
 public struct PluginSlotState: Codable, Equatable {
     public let slotID: UUID
+    public let componentType: UInt32?
     public let componentSubType: UInt32
+    public let componentManufacturer: UInt32?
     public let auState: String           // base64-encoded binary plist of fullState
     public var isEnabled: Bool
 
-    public init(slotID: UUID, componentSubType: UInt32, auState: String, isEnabled: Bool) {
+    public init(slotID: UUID, componentType: UInt32? = nil, componentSubType: UInt32,
+                componentManufacturer: UInt32? = nil, auState: String, isEnabled: Bool) {
         self.slotID = slotID
+        self.componentType = componentType
         self.componentSubType = componentSubType
+        self.componentManufacturer = componentManufacturer
         self.auState = auState
         self.isEnabled = isEnabled
     }

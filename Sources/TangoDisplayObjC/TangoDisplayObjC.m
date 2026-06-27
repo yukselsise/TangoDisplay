@@ -13,3 +13,13 @@ BOOL TDTryAudioEngineConnect(AVAudioEngine *engine,
         return NO;
     }
 }
+
+BOOL TDTryAudioEngineAttach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason) {
+    @try { [engine attachNode:node]; return YES; }
+    @catch (NSException *ex) { if (outReason) *outReason = ex.reason ?: ex.name; return NO; }
+}
+
+BOOL TDTryAudioEngineDetach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason) {
+    @try { [engine detachNode:node]; return YES; }
+    @catch (NSException *ex) { if (outReason) *outReason = ex.reason ?: ex.name; return NO; }
+}

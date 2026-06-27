@@ -49,9 +49,11 @@ final class AudioUnitPluginManager {
 
             let configuredState = configuration?.slotStates.first { $0.slotID == slot.id }
             if let configuredState,
-               configuredState.componentSubType != slot.selection.componentSubType {
+               (configuredState.componentSubType != slot.selection.componentSubType
+                || configuredState.componentType.map { $0 != slot.selection.componentType } == true
+                || configuredState.componentManufacturer.map { $0 != slot.selection.componentManufacturer } == true) {
                 throw AudioUnitPluginError.invalidConfiguration(
-                    "\(slot.selection.name): component type does not match the assigned slot"
+                    "\(slot.selection.name): component identity does not match the assigned slot"
                 )
             }
             if let configuredState {
