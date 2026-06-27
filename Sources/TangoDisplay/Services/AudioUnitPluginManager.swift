@@ -7,6 +7,8 @@ enum AudioUnitPluginError: Error, LocalizedError {
     case instantiationFailed(String)
     case graphConnectionFailed(String)
     case uiUnavailable
+    case invalidConfiguration(String)
+    case presetUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +16,8 @@ enum AudioUnitPluginError: Error, LocalizedError {
         case .instantiationFailed(let r):  return "Audio Unit instantiation failed: \(r)"
         case .graphConnectionFailed(let r): return "Audio graph connection failed: \(r)"
         case .uiUnavailable:               return "This plugin does not provide an editor UI."
+        case .invalidConfiguration(let r): return "Plugin configuration is invalid: \(r)"
+        case .presetUnavailable(let name): return "Plugin preset is unavailable: \(name)"
         }
     }
 }
@@ -43,18 +47,30 @@ final class AudioUnitPluginManager {
             let unit = try await instantiate(slot.selection)
             try Task.checkCancellation()
 
-            let configuredState = configuration?.slotStates.first {
-                $0.slotID == slot.id && $0.componentSubType == slot.selection.componentSubType
-            }
+            let configuredState = configuration?.slotStates.first { $0.slotID == slot.id }
             if let configuredState,
-               let fullState = try? AUStateCodec.decode(configuredState.auState) {
+               configuredState.componentSubType != slot.selection.componentSubType {
+                throw AudioUnitPluginError.invalidConfiguration(
+                    "\(slot.selection.name): component type does not match the assigned slot"
+                )
+            }
+            if let configuredState {
+                let fullState: [String: Any]
+                do {
+                    fullState = try AUStateCodec.decode(configuredState.auState)
+                } catch {
+                    throw AudioUnitPluginError.invalidConfiguration(
+                        "\(slot.selection.name): \(error.localizedDescription)"
+                    )
+                }
                 unit.auAudioUnit.fullState = fullState
-            } else if let presetName = slot.lastUsedPresetName {
+            } else if configuration == nil, let presetName = slot.lastUsedPresetName {
                 let presetManager = AudioUnitPresetManager(for: slot.selection)
                 let presets = presetManager.factoryPresets(for: unit) + presetManager.userPresets()
-                if let preset = presets.first(where: { $0.name == presetName }) {
-                    try presetManager.applyPreset(preset, to: unit)
+                guard let preset = presets.first(where: { $0.name == presetName }) else {
+                    throw AudioUnitPluginError.presetUnavailable(presetName)
                 }
+                try presetManager.applyPreset(preset, to: unit)
             }
             unit.auAudioUnit.shouldBypassEffect = !(configuredState?.isEnabled ?? slot.isEnabled)
 

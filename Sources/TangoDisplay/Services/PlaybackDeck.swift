@@ -1,12 +1,14 @@
 import AVFoundation
 import Foundation
 import TangoDisplayCore
+import TangoDisplayObjC
 
 enum PlaybackDeckError: LocalizedError {
     case notAttached
     case notPrepared
     case stalePreparation
     case invalidStartingFrame
+    case graphConnectionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +16,7 @@ enum PlaybackDeckError: LocalizedError {
         case .notPrepared: return "Playback deck has no prepared track."
         case .stalePreparation: return "Playback deck preparation was superseded."
         case .invalidStartingFrame: return "The requested starting frame is outside the audio file."
+        case .graphConnectionFailed(let reason): return "Playback deck graph connection failed: \(reason)"
         }
     }
 }
@@ -93,12 +96,21 @@ final class PlaybackDeck {
 
             self.disconnectGraph(from: engine)
             self.detachPlugins(from: engine)
-            for runtime in runtimes { engine.attach(runtime.unit) }
-            try self.connectGraph(
-                in: engine,
-                format: file.processingFormat,
-                plugins: runtimes
-            )
+            var attached: [AudioUnitPluginManager.DeckPluginRuntime] = []
+            do {
+                for runtime in runtimes {
+                    engine.attach(runtime.unit)
+                    attached.append(runtime)
+                }
+                try self.connectGraph(
+                    in: engine,
+                    format: file.processingFormat,
+                    plugins: runtimes
+                )
+            } catch {
+                self.rollbackPreparation(in: engine, attachedPlugins: attached)
+                throw error
+            }
 
             self.audioFile = file
             self.processingFormat = file.processingFormat
@@ -111,7 +123,9 @@ final class PlaybackDeck {
         do {
             try await task.value
         } catch {
-            if generation == requestedGeneration { clearPreparedIdentity() }
+            if generation == requestedGeneration {
+                rollbackPreparation(in: engine, attachedPlugins: pluginRuntimes)
+            }
             throw error
         }
         if generation == requestedGeneration { preparationTask = nil }
@@ -182,8 +196,8 @@ final class PlaybackDeck {
         format: AVAudioFormat,
         plugins: [AudioUnitPluginManager.DeckPluginRuntime]
     ) throws {
-        engine.connect(playerNode, to: eq, format: format)
-        engine.connect(eq, to: replayGainMixer, format: format)
+        try safeConnect(engine, playerNode, eq, format)
+        try safeConnect(engine, eq, replayGainMixer, format)
         let pluginFormat = format.channelCount < 2
             ? AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 2)
             : format
@@ -192,10 +206,39 @@ final class PlaybackDeck {
             if let pluginFormat {
                 try runtime.unit.auAudioUnit.inputBusses[0].setFormat(pluginFormat)
             }
-            engine.connect(previous, to: runtime.unit, format: pluginFormat)
+            try safeConnect(engine, previous, runtime.unit, pluginFormat)
             previous = runtime.unit
         }
-        engine.connect(previous, to: outputMixer, format: pluginFormat)
+        try safeConnect(engine, previous, outputMixer, pluginFormat)
+    }
+
+    private func safeConnect(
+        _ engine: AVAudioEngine,
+        _ source: AVAudioNode,
+        _ destination: AVAudioNode,
+        _ format: AVAudioFormat?
+    ) throws {
+        var reason: NSString?
+        guard TDTryAudioEngineConnect(engine, source, destination, format, &reason) else {
+            throw PlaybackDeckError.graphConnectionFailed(
+                (reason as String?) ?? "NSException during connect"
+            )
+        }
+    }
+
+    private func rollbackPreparation(
+        in engine: AVAudioEngine,
+        attachedPlugins: [AudioUnitPluginManager.DeckPluginRuntime]
+    ) {
+        disconnectGraph(from: engine)
+        for runtime in attachedPlugins {
+            engine.disconnectNodeOutput(runtime.unit)
+            engine.detach(runtime.unit)
+        }
+        pluginRuntimes.removeAll()
+        clearPreparedIdentity()
+        replayGainMixer.outputVolume = 1
+        outputMixer.outputVolume = 1
     }
 
     private func disconnectGraph(from engine: AVAudioEngine) {
