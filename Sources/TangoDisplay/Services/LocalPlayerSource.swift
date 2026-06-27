@@ -127,6 +127,9 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private var currentPaddingFrames: AVAudioFrameCount = 0
     private var preparedAutoGap: PreparedAutoGap<UUID>?
     private var autoGapAnalysisTask: Task<Void, Never>?
+    private var pendingAutoGapIdentity: PendingAutoGapIdentity<UUID>?
+    private var autoGapQueuedForGeneration: Int?
+    private var noGapPreparedForGeneration: Int?
     private var audioStartSampleTime: AVAudioFramePosition = 0
     private var silencePending: Bool = false
 
@@ -801,6 +804,9 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         playerNode.stop()
         scheduleGeneration += 1
         let gen = scheduleGeneration
+        autoGapQueuedForGeneration = nil
+        noGapPreparedForGeneration = bypassAutoGap ? gen : nil
+        pendingAutoGapIdentity = nil
         do {
             let file = try AVAudioFile(forReading: entry.fileURL)
             audioFile = file
@@ -893,12 +899,19 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         guard generation == scheduleGeneration,
               let currentID = currentEntryID,
               let current = setlist.entries.first(where: { $0.id == currentID }) else { return }
+        if autoGapQueuedForGeneration == generation { return }
         let stopForPerformance = current.isPerformance && settings.stopAfterEachPerformanceTrack
         guard currentID != setlist.stopAfterEntryID, !stopForPerformance,
               let next = setlist.firstUnplayed(after: currentID) else {
             skipNextImmediate()
             return
         }
+        if noGapPreparedForGeneration == generation {
+            skipNextImmediate()
+            return
+        }
+        // Analysis did not finish before the audible end. Conservatively append the
+        // full target now; this path may include main-queue scheduling latency.
         advanceAutomatically(from: current, to: next)
     }
 
@@ -920,8 +933,35 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                     currentID: currentID, nextID: nextID,
                     trailing: currentSilence.trailing, leading: nextSilence.leading
                 )
+                self.queuePreparedAutoGapIfEligible(currentID: currentID, nextID: nextID)
             }
         }
+    }
+
+    private func queuePreparedAutoGapIfEligible(currentID: UUID, nextID: UUID) {
+        let generation = scheduleGeneration
+        guard autoGapQueuedForGeneration != generation,
+              noGapPreparedForGeneration != generation,
+              self.currentEntryID == currentID,
+              let current = setlist.entries.first(where: { $0.id == currentID }),
+              let next = setlist.firstUnplayed(after: currentID), next.id == nextID else { return }
+        let willStop = currentID == setlist.stopAfterEntryID
+            || (current.isPerformance && settings.stopAfterEachPerformanceTrack)
+        guard SmartAutoGapTransitionPolicy.shouldSchedule(
+            enabled: settings.autoGapEnabled, ignored: next.ignoresAutoGap,
+            automatic: true, willStop: willStop
+        ) else {
+            noGapPreparedForGeneration = generation
+            return
+        }
+        let padding = preparedAutoGap?.injectedDuration(
+            currentID: currentID, nextID: nextID, target: settings.autoGapDuration
+        ) ?? settings.autoGapDuration
+        guard padding > 0 else {
+            noGapPreparedForGeneration = generation
+            return
+        }
+        scheduleAutoGap(seconds: padding, currentEntryID: currentID, nextEntryID: nextID, generation: generation)
     }
 
     private func advanceAutomatically(from current: SetlistEntry, to next: SetlistEntry) {
@@ -934,12 +974,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             ) ?? settings.autoGapDuration
         }
         guard padding > 0 else { skipNextImmediate(); return }
-        scheduleAutoGap(seconds: padding, nextEntryID: next.id)
+        scheduleAutoGap(seconds: padding, currentEntryID: current.id, nextEntryID: next.id, generation: scheduleGeneration)
     }
 
-    private func scheduleAutoGap(seconds: Double, nextEntryID: UUID) {
-        scheduleGeneration += 1
-        let generation = scheduleGeneration
+    private func scheduleAutoGap(seconds: Double, currentEntryID: UUID, nextEntryID: UUID, generation: Int) {
+        guard autoGapQueuedForGeneration != generation else { return }
         guard let format = audioFile?.processingFormat else { skipNextImmediate(); return }
         let frameValue = (seconds * format.sampleRate).rounded()
         guard frameValue.isFinite, frameValue > 0, frameValue <= Double(UInt32.max) else {
@@ -952,13 +991,31 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         buffer.frameLength = frames
         currentPaddingFrames = frames
         silencePending = true
+        autoGapQueuedForGeneration = generation
+        pendingAutoGapIdentity = PendingAutoGapIdentity(
+            currentID: currentEntryID, nextID: nextEntryID, generation: generation
+        )
         setlist.setAutoGapApplied(id: nextEntryID, applied: true)
         playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
-                guard let self, self.scheduleGeneration == generation else { return }
+                guard let self else { return }
                 self.currentPaddingFrames = 0
                 self.silencePending = false
                 self.setlist.setAutoGapApplied(id: nextEntryID, applied: false)
+                let actualNextID = self.setlist.firstUnplayed(after: currentEntryID)?.id
+                guard let activeCurrentID = self.currentEntryID,
+                      let pending = self.pendingAutoGapIdentity,
+                      pending.matches(currentID: activeCurrentID,
+                                      nextID: actualNextID, generation: self.scheduleGeneration) else {
+                    self.pendingAutoGapIdentity = nil
+                    self.autoGapQueuedForGeneration = nil
+                    // The already-rendered silence cannot be unscheduled. Advance to the
+                    // newly-adjacent entry immediately, without applying stale leading data
+                    // or injecting a second gap.
+                    if self.currentEntryID == currentEntryID { self.skipNextImmediate() }
+                    return
+                }
+                self.pendingAutoGapIdentity = nil
                 self.skipNextImmediate()
             }
         }
@@ -976,6 +1033,9 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
         currentPaddingFrames = 0
         silencePending = false
+        pendingAutoGapIdentity = nil
+        autoGapQueuedForGeneration = nil
+        noGapPreparedForGeneration = nil
     }
 
     private func cancelAutoGapPreparation() {

@@ -29,6 +29,76 @@ public struct PreparedAutoGap<ID: Equatable & Sendable>: Equatable, Sendable {
     }
 }
 
+public struct PendingAutoGapIdentity<ID: Equatable & Sendable>: Equatable, Sendable {
+    public let currentID: ID
+    public let nextID: ID
+    public let generation: Int
+    public init(currentID: ID, nextID: ID, generation: Int) {
+        self.currentID = currentID; self.nextID = nextID; self.generation = generation
+    }
+    public func matches(currentID: ID, nextID: ID?, generation: Int) -> Bool {
+        self.currentID == currentID && self.nextID == nextID && self.generation == generation
+    }
+}
+
+public enum SmartAutoGapTransitionPolicy {
+    public static func shouldSchedule(enabled: Bool, ignored: Bool, automatic: Bool, willStop: Bool) -> Bool {
+        enabled && !ignored && automatic && !willStop
+    }
+}
+
+public struct SilenceAccumulator: Sendable {
+    private let sampleRate: Double
+    private let channelCount: Int
+    private let blockFrames: Int
+    private var framesInBlock = 0
+    private var blockPeak: Float = 0
+    private var blockHasInvalid = false
+    private var totalFrames = 0
+    private var leadingFrames = 0
+    private var trailingFrames = 0
+    private var foundAudible = false
+
+    public init(sampleRate: Double, channelCount: Int) {
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        let rounded = (sampleRate * 0.01).rounded()
+        self.blockFrames = rounded.isFinite && rounded > 0 && rounded < Double(Int.max) ? max(1, Int(rounded)) : 1
+    }
+
+    public mutating func append(samples: [[Float]]) {
+        guard sampleRate.isFinite, sampleRate > 0, channelCount > 0,
+              samples.count == channelCount, let count = samples.map(\.count).min() else { return }
+        for frame in 0..<count {
+            for channel in 0..<channelCount {
+                let value = samples[channel][frame]
+                if value.isFinite { blockPeak = max(blockPeak, abs(value)) } else { blockHasInvalid = true }
+            }
+            framesInBlock += 1
+            totalFrames += 1
+            if framesInBlock == blockFrames { completeBlock() }
+        }
+    }
+
+    public mutating func finish() -> IntrinsicSilence {
+        if framesInBlock > 0 { completeBlock() }
+        guard totalFrames > 0 else { return .zero }
+        if !foundAudible { return IntrinsicSilence(leading: Double(totalFrames) / sampleRate, trailing: 0) }
+        return IntrinsicSilence(leading: Double(leadingFrames) / sampleRate, trailing: Double(trailingFrames) / sampleRate)
+    }
+
+    private mutating func completeBlock() {
+        let silent = !blockHasInvalid && blockPeak <= Float(4.0 / 255.0)
+        if silent {
+            if foundAudible { trailingFrames += framesInBlock } else { leadingFrames += framesInBlock }
+        } else {
+            foundAudible = true
+            trailingFrames = 0
+        }
+        framesInBlock = 0; blockPeak = 0; blockHasInvalid = false
+    }
+}
+
 public enum SmartAutoGap {
     /// Measures consecutive silent blocks at the beginning and end of PCM samples.
     /// Unequal channel arrays are measured only through their shortest shared frame count.

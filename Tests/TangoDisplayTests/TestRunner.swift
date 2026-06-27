@@ -1128,6 +1128,31 @@ func runSmartAutoGapTests() {
             try expectEqual(prepared.injectedDuration(currentID: "A", nextID: "C", target: 5), nil)
         }
     }
+    suite("SmartAutoGap — streaming measurement") {
+        test("chunk boundaries preserve ten millisecond blocks") {
+            var meter = SilenceAccumulator(sampleRate: 1_000, channelCount: 2)
+            meter.append(samples: [Array(repeating: 0, count: 7), Array(repeating: 0, count: 7)])
+            meter.append(samples: [Array(repeating: 0, count: 13), Array(repeating: 0, count: 3) + Array(repeating: 1, count: 10)])
+            try expectEqual(meter.finish(), IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
+    }
+    suite("SmartAutoGap — transition policy") {
+        test("disabled ignored manual and stopping transitions bypass gaps") {
+            try expectEqual(SmartAutoGapTransitionPolicy.shouldSchedule(enabled: false, ignored: false, automatic: true, willStop: false), false)
+            try expectEqual(SmartAutoGapTransitionPolicy.shouldSchedule(enabled: true, ignored: true, automatic: true, willStop: false), false)
+            try expectEqual(SmartAutoGapTransitionPolicy.shouldSchedule(enabled: true, ignored: false, automatic: false, willStop: false), false)
+            try expectEqual(SmartAutoGapTransitionPolicy.shouldSchedule(enabled: true, ignored: false, automatic: true, willStop: true), false)
+        }
+        test("automatic eligible pair schedules") {
+            try expectEqual(SmartAutoGapTransitionPolicy.shouldSchedule(enabled: true, ignored: false, automatic: true, willStop: false), true)
+        }
+        test("pending pair validates generation and adjacency") {
+            let pending = PendingAutoGapIdentity(currentID: "A", nextID: "B", generation: 4)
+            try expect(pending.matches(currentID: "A", nextID: "B", generation: 4))
+            try expect(!pending.matches(currentID: "A", nextID: "C", generation: 4))
+            try expect(!pending.matches(currentID: "A", nextID: "B", generation: 5))
+        }
+    }
 }
 
 // MARK: - Main entry point

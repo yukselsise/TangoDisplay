@@ -29,14 +29,20 @@ actor AudioSilenceAnalyzer {
     private static func analyzeFile(url: URL) -> IntrinsicSilence {
         guard let file = try? AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false) else { return .zero }
         let format = file.processingFormat
-        guard format.sampleRate > 0, file.length > 0, file.length <= AVAudioFramePosition(UInt32.max),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length)),
-              (try? file.read(into: buffer)) != nil,
-              let data = buffer.floatChannelData else { return .zero }
-        let frames = Int(buffer.frameLength)
-        let samples = (0..<Int(format.channelCount)).map { channel in
-            Array(UnsafeBufferPointer(start: data[channel], count: frames))
+        let capacity: AVAudioFrameCount = 32_768
+        guard format.sampleRate > 0, file.length > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return .zero }
+        var accumulator = SilenceAccumulator(sampleRate: format.sampleRate, channelCount: Int(format.channelCount))
+        while file.framePosition < file.length {
+            buffer.frameLength = 0
+            guard (try? file.read(into: buffer, frameCount: capacity)) != nil,
+                  buffer.frameLength > 0, let data = buffer.floatChannelData else { break }
+            let frames = Int(buffer.frameLength)
+            let samples = (0..<Int(format.channelCount)).map { channel in
+                Array(UnsafeBufferPointer(start: data[channel], count: frames))
+            }
+            accumulator.append(samples: samples)
         }
-        return SmartAutoGap.measureSilence(samples: samples, sampleRate: format.sampleRate)
+        return accumulator.finish()
     }
 }
