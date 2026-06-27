@@ -20,6 +20,55 @@ enum AudioUnitPluginError: Error, LocalizedError {
 
 final class AudioUnitPluginManager {
 
+    /// A plugin instance owned by one playback deck. This deliberately carries
+    /// no editor-window or UI observation state: preparing a standby deck must
+    /// not publish status or mutate the active deck's controls.
+    struct DeckPluginRuntime {
+        let slotID: UUID
+        let selection: AudioUnitPluginSelection
+        let unit: AVAudioUnit
+        let isEnabled: Bool
+        let configurationID: UUID?
+    }
+
+    func instantiateDeckChain(
+        slots: [AudioUnitChainSlot],
+        configuration: PluginChainConfiguration?
+    ) async throws -> [DeckPluginRuntime] {
+        var result: [DeckPluginRuntime] = []
+        result.reserveCapacity(slots.count)
+
+        for slot in slots {
+            try Task.checkCancellation()
+            let unit = try await instantiate(slot.selection)
+            try Task.checkCancellation()
+
+            let configuredState = configuration?.slotStates.first {
+                $0.slotID == slot.id && $0.componentSubType == slot.selection.componentSubType
+            }
+            if let configuredState,
+               let fullState = try? AUStateCodec.decode(configuredState.auState) {
+                unit.auAudioUnit.fullState = fullState
+            } else if let presetName = slot.lastUsedPresetName {
+                let presetManager = AudioUnitPresetManager(for: slot.selection)
+                let presets = presetManager.factoryPresets(for: unit) + presetManager.userPresets()
+                if let preset = presets.first(where: { $0.name == presetName }) {
+                    try presetManager.applyPreset(preset, to: unit)
+                }
+            }
+            unit.auAudioUnit.shouldBypassEffect = !(configuredState?.isEnabled ?? slot.isEnabled)
+
+            result.append(DeckPluginRuntime(
+                slotID: slot.id,
+                selection: slot.selection,
+                unit: unit,
+                isEnabled: configuredState?.isEnabled ?? slot.isEnabled,
+                configurationID: configuration?.id
+            ))
+        }
+        return result
+    }
+
     func availableEffects() -> [AudioUnitPluginSelection] {
         // Enumerate both plain effects (aufx) and music effects (aumf). Many
         // modern plugins (e.g. FabFilter Pro-Q 4) register as aumf so they can
@@ -72,7 +121,7 @@ final class AudioUnitPluginManager {
             componentFlagsMask: 0
         )
         let components = AVAudioUnitComponentManager.shared().components(matching: desc)
-        guard let component = components.first else {
+        guard !components.isEmpty else {
             throw AudioUnitPluginError.componentNotFound
         }
 
