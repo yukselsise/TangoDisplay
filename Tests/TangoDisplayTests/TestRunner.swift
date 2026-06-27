@@ -913,6 +913,17 @@ func runAutoReplayGainTests() {
 // MARK: - AudioUnitPlugin tests
 
 func runAudioUnitPluginTests() {
+    suite("Cleanup ledger") {
+        test("failed detach resources remain owned and successful ones clear") {
+            enum Failure: Error { case detach }
+            let result = retainCleanupFailures([1, 2, 3]) { value in
+                if value == 2 { throw Failure.detach }
+            }
+            try expectEqual(result.remaining, [2])
+            try expectNotNil(result.firstError)
+        }
+    }
+
     suite("AudioUnitPluginSelection — model") {
         test("encodes and decodes round-trip") {
             let sel = AudioUnitPluginSelection(
