@@ -11,6 +11,8 @@ public struct IntrinsicSilence: Equatable, Sendable {
 }
 
 public enum SmartAutoGap {
+    /// Measures consecutive silent blocks at the beginning and end of PCM samples.
+    /// Unequal channel arrays are measured only through their shortest shared frame count.
     public static func measureSilence(
         samples: [[Float]],
         sampleRate: Double
@@ -20,20 +22,32 @@ public enum SmartAutoGap {
             return .zero
         }
 
-        let blockFrames = max(1, Int((sampleRate * 0.01).rounded()))
+        let roundedBlockFrames = (sampleRate * 0.01).rounded()
+        guard roundedBlockFrames.isFinite, roundedBlockFrames < Double(Int.max) else {
+            return .zero
+        }
+        let blockFrames = max(1, Int(roundedBlockFrames))
         let threshold = Float(4.0 / 255.0)
         var silentBlockFrames: [Int] = []
         var blockStart = 0
 
         while blockStart < frameCount {
-            let blockEnd = min(blockStart + blockFrames, frameCount)
+            let blockEnd = blockStart + min(blockFrames, frameCount - blockStart)
             var peak: Float = 0
+            var containsNonFiniteSample = false
             for channel in samples {
                 for frame in blockStart..<blockEnd {
-                    peak = max(peak, abs(channel[frame]))
+                    let sample = channel[frame]
+                    if !sample.isFinite {
+                        containsNonFiniteSample = true
+                        break
+                    }
+                    peak = max(peak, abs(sample))
                 }
+                if containsNonFiniteSample { break }
             }
-            silentBlockFrames.append(peak <= threshold ? blockEnd - blockStart : 0)
+            let isSilent = !containsNonFiniteSample && peak <= threshold
+            silentBlockFrames.append(isSilent ? blockEnd - blockStart : 0)
             blockStart = blockEnd
         }
 

@@ -1089,6 +1089,33 @@ func runSmartAutoGapTests() {
             let result = SmartAutoGap.measureSilence(samples: [Array(repeating: 1, count: 10) + Array(repeating: 0, count: 5)], sampleRate: 1_000)
             try expectEqual(result, IntrinsicSilence(leading: 0, trailing: 0.005))
         }
+        test("extremely large finite sample rates return zero safely") {
+            try expectEqual(
+                SmartAutoGap.measureSilence(samples: [[0]], sampleRate: .greatestFiniteMagnitude),
+                .zero
+            )
+        }
+        test("NaN in either stereo channel makes its block audible") {
+            let result = SmartAutoGap.measureSilence(
+                samples: [Array(repeating: 0, count: 20), Array(repeating: 0, count: 10) + [.nan] + Array(repeating: 0, count: 9)],
+                sampleRate: 1_000
+            )
+            try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
+        test("infinity in either stereo channel makes its block audible") {
+            let result = SmartAutoGap.measureSilence(
+                samples: [Array(repeating: 0, count: 10) + [.infinity] + Array(repeating: 0, count: 9), Array(repeating: 0, count: 20)],
+                sampleRate: 1_000
+            )
+            try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
+        test("unequal channels stop at the shortest shared frame count") {
+            let result = SmartAutoGap.measureSilence(
+                samples: [Array(repeating: 0, count: 10) + Array(repeating: 1, count: 10), Array(repeating: 0, count: 10)],
+                sampleRate: 1_000
+            )
+            try expectEqual(result, IntrinsicSilence(leading: 0.01, trailing: 0))
+        }
     }
 }
 
