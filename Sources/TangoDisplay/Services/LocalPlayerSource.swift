@@ -998,23 +998,20 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         setlist.setAutoGapApplied(id: nextEntryID, applied: true)
         playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self,
+                      self.scheduleGeneration == generation,
+                      let activeCurrentID = self.currentEntryID,
+                      let pending = self.pendingAutoGapIdentity,
+                      pending.matches(
+                        currentID: activeCurrentID,
+                        nextID: self.setlist.firstUnplayed(after: activeCurrentID)?.id,
+                        generation: generation
+                      ) else { return }
                 self.currentPaddingFrames = 0
                 self.silencePending = false
                 self.setlist.setAutoGapApplied(id: nextEntryID, applied: false)
                 let actualNextID = self.setlist.firstUnplayed(after: currentEntryID)?.id
-                guard let activeCurrentID = self.currentEntryID,
-                      let pending = self.pendingAutoGapIdentity,
-                      pending.matches(currentID: activeCurrentID,
-                                      nextID: actualNextID, generation: self.scheduleGeneration) else {
-                    self.pendingAutoGapIdentity = nil
-                    self.autoGapQueuedForGeneration = nil
-                    // The already-rendered silence cannot be unscheduled. Advance to the
-                    // newly-adjacent entry immediately, without applying stale leading data
-                    // or injecting a second gap.
-                    if self.currentEntryID == currentEntryID { self.skipNextImmediate() }
-                    return
-                }
+                guard actualNextID == nextEntryID else { return }
                 self.pendingAutoGapIdentity = nil
                 self.skipNextImmediate()
             }

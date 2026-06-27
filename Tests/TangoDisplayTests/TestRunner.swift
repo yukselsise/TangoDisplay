@@ -1152,6 +1152,15 @@ func runSmartAutoGapTests() {
             try expect(!pending.matches(currentID: "A", nextID: "C", generation: 4))
             try expect(!pending.matches(currentID: "A", nextID: "B", generation: 5))
         }
+        test("old completion cannot match a newer active gap") {
+            let oldCompletion = PendingAutoGapIdentity(currentID: "A", nextID: "B", generation: 4)
+            let newerActiveGap = PendingAutoGapIdentity(currentID: "B", nextID: "C", generation: 5)
+            try expect(!oldCompletion.matches(
+                currentID: newerActiveGap.currentID,
+                nextID: newerActiveGap.nextID,
+                generation: newerActiveGap.generation
+            ))
+        }
     }
 }
 
