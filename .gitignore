@@ -1,6 +1,7 @@
 # Swift / SPM build artifacts
 .build/
 .swiftpm/
+.worktrees/
 *.xcodeproj
 *.xcworkspace
 
