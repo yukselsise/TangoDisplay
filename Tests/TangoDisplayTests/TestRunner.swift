@@ -1164,6 +1164,76 @@ func runSmartAutoGapTests() {
     }
 }
 
+func runDualDeckStateTests() {
+    suite("DualDeckState") {
+        test("A activates while B remains empty") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            try expectEqual(state.activeDeck, .a)
+            try expectEqual(state[.a], DeckSnapshot(phase: .active, entryID: "current", generation: 1))
+            try expectEqual(state[.b].phase, .empty)
+        }
+        test("B preparation becomes ready only for matching callback identity") {
+            var state = DualDeckState<String>()
+            state.beginPreparation(deck: .b, entryID: "next", generation: 2)
+            try expectEqual(state[.b].phase, .preparing)
+            try expect(!state.markReady(deck: .b, entryID: "wrong", generation: 2))
+            try expect(state.markReady(deck: .b, entryID: "next", generation: 2))
+            try expectEqual(state[.b].phase, .ready)
+        }
+        test("commit requires matching identities and generation") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 3)
+            state.beginPreparation(deck: .b, entryID: "next", generation: 3)
+            _ = state.markReady(deck: .b, entryID: "next", generation: 3)
+            try expectNil(state.commitTransition(currentID: "wrong", nextID: "next", settingsRevision: 4))
+            try expectNil(state.commitTransition(currentID: "current", nextID: "wrong", settingsRevision: 4))
+            let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)
+            try expectNotNil(token)
+            try expectEqual(token?.generation, 3)
+        }
+        test("promotion swaps active and standby decks") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
+            _ = state.markReady(deck: .b, entryID: "next", generation: 1)
+            let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
+            try expectEqual(state.promote(token), .b)
+            try expectEqual(state.activeDeck, .b)
+            try expectEqual(state[.b].phase, .active)
+            try expectEqual(state[.a].phase, .recycling)
+        }
+        test("reorder invalidates a non-adjacent standby") {
+            var state = DualDeckState<String>()
+            state.beginPreparation(deck: .b, entryID: "old-next", generation: 1)
+            _ = state.markReady(deck: .b, entryID: "old-next", generation: 1)
+            try expect(state.invalidateStandby(unlessEntryID: "new-next"))
+            try expectEqual(state[.b].phase, .empty)
+        }
+        test("stale callback cannot mutate newer preparation") {
+            var state = DualDeckState<String>()
+            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
+            state.beginPreparation(deck: .b, entryID: "next", generation: 2)
+            try expect(!state.markReady(deck: .b, entryID: "next", generation: 1))
+            try expectEqual(state[.b].phase, .preparing)
+        }
+        test("stop-after policy rejects preparation") {
+            var state = DualDeckState<String>()
+            try expect(!state.beginPreparation(deck: .b, entryID: "next", generation: 1, automaticTransitionAllowed: false))
+            try expectEqual(state[.b].phase, .empty)
+        }
+        test("settings revision invalidates a stale committed timeline") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
+            _ = state.markReady(deck: .b, entryID: "next", generation: 1)
+            let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
+            try expectNil(state.promote(token, settingsRevision: 5))
+            try expectEqual(state.activeDeck, .a)
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runCortinaDetectorTests()
@@ -1174,6 +1244,7 @@ runReplayGainTests()
 runAutoReplayGainTests()
 runAudioUnitPluginTests()
 runSmartAutoGapTests()
+runDualDeckStateTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"
