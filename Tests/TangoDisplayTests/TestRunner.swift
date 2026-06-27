@@ -1175,29 +1175,30 @@ func runDualDeckStateTests() {
         }
         test("B preparation becomes ready only for matching callback identity") {
             var state = DualDeckState<String>()
-            state.beginPreparation(deck: .b, entryID: "next", generation: 2)
+            let stale = state.beginPreparation(deck: .b, entryID: "wrong")!
+            let token = state.beginPreparation(deck: .b, entryID: "next")!
             try expectEqual(state[.b].phase, .preparing)
-            try expect(!state.markReady(deck: .b, entryID: "wrong", generation: 2))
-            try expect(state.markReady(deck: .b, entryID: "next", generation: 2))
+            try expect(!state.markReady(stale))
+            try expect(state.markReady(token))
             try expectEqual(state[.b].phase, .ready)
         }
         test("commit requires matching identities and generation") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "current", generation: 3)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 3)
-            _ = state.markReady(deck: .b, entryID: "next", generation: 3)
+            let preparation = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(preparation)
             try expectNil(state.commitTransition(currentID: "wrong", nextID: "next", settingsRevision: 4))
             try expectNil(state.commitTransition(currentID: "current", nextID: "wrong", settingsRevision: 4))
             let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)
             try expectNotNil(token)
             try expectEqual(token?.outgoingGeneration, 3)
-            try expectEqual(token?.incomingGeneration, 3)
+            try expectEqual(token?.incomingGeneration, preparation.generation)
         }
         test("promotion swaps active and standby decks") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "current", generation: 1)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
-            _ = state.markReady(deck: .b, entryID: "next", generation: 1)
+            let preparation = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(preparation)
             let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
             try expectEqual(state.promote(token), .b)
             try expectEqual(state.activeDeck, .b)
@@ -1206,28 +1207,28 @@ func runDualDeckStateTests() {
         }
         test("reorder invalidates a non-adjacent standby") {
             var state = DualDeckState<String>()
-            state.beginPreparation(deck: .b, entryID: "old-next", generation: 1)
-            _ = state.markReady(deck: .b, entryID: "old-next", generation: 1)
+            let preparation = state.beginPreparation(deck: .b, entryID: "old-next")!
+            _ = state.markReady(preparation)
             try expect(state.invalidateStandby(unlessEntryID: "new-next"))
             try expectEqual(state[.b].phase, .empty)
         }
         test("stale callback cannot mutate newer preparation") {
             var state = DualDeckState<String>()
-            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 2)
-            try expect(!state.markReady(deck: .b, entryID: "next", generation: 1))
+            let stale = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.beginPreparation(deck: .b, entryID: "next")!
+            try expect(!state.markReady(stale))
             try expectEqual(state[.b].phase, .preparing)
         }
         test("stop-after policy rejects preparation") {
             var state = DualDeckState<String>()
-            try expect(!state.beginPreparation(deck: .b, entryID: "next", generation: 1, automaticTransitionAllowed: false))
+            try expectNil(state.beginPreparation(deck: .b, entryID: "next", automaticTransitionAllowed: false))
             try expectEqual(state[.b].phase, .empty)
         }
         test("settings revision invalidates a stale committed timeline") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "current", generation: 1)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 1)
-            _ = state.markReady(deck: .b, entryID: "next", generation: 1)
+            let preparation = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(preparation)
             let token = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
             try expectNil(state.promote(token, settingsRevision: 5))
             try expectEqual(state.activeDeck, .a)
@@ -1235,13 +1236,13 @@ func runDualDeckStateTests() {
         test("recycled deck can prepare with a new generation and promote B back to A") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "one", generation: 10)
-            state.beginPreparation(deck: .b, entryID: "two", generation: 20)
-            _ = state.markReady(deck: .b, entryID: "two", generation: 20)
+            let firstPreparation = state.beginPreparation(deck: .b, entryID: "two")!
+            _ = state.markReady(firstPreparation)
             let first = state.commitTransition(currentID: "one", nextID: "two", settingsRevision: 1)!
             try expectEqual(state.promote(first), .b)
             state.reset(deck: .a)
-            state.beginPreparation(deck: .a, entryID: "three", generation: 30)
-            _ = state.markReady(deck: .a, entryID: "three", generation: 30)
+            let secondPreparation = state.beginPreparation(deck: .a, entryID: "three")!
+            _ = state.markReady(secondPreparation)
             let second = state.commitTransition(currentID: "two", nextID: "three", settingsRevision: 1)!
             try expect(second.generation != first.generation)
             try expectEqual(state.promote(second), .a)
@@ -1249,8 +1250,8 @@ func runDualDeckStateTests() {
         test("settings mismatch cancels schedule restores ready and permits recommit") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "current", generation: 1)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 8)
-            _ = state.markReady(deck: .b, entryID: "next", generation: 8)
+            let preparation = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(preparation)
             let stale = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 4)!
             try expectNil(state.promote(stale, settingsRevision: 5))
             try expectNil(state.committedTransition)
@@ -1267,27 +1268,37 @@ func runDualDeckStateTests() {
         }
         test("failed recycling and reset lifecycle states are explicit") {
             var state = DualDeckState<String>()
-            state.beginPreparation(deck: .b, entryID: "next", generation: 3)
-            try expect(state.markFailed(deck: .b, entryID: "next", generation: 3))
+            let preparation = state.beginPreparation(deck: .b, entryID: "next")!
+            try expect(state.markFailed(preparation))
             try expectEqual(state[.b].phase, .failed)
-            try expect(state.recycle(deck: .b, entryID: "next", generation: 3))
+            try expect(state.recycle(preparation))
             try expectEqual(state[.b].phase, .recycling)
             state.reset(deck: .b)
             try expectEqual(state[.b].phase, .empty)
-            state.beginPreparation(deck: .b, entryID: "later", generation: 4)
+            let cancelled = state.beginPreparation(deck: .b, entryID: "later")!
             state.cancel(deck: .b)
-            try expect(!state.markReady(deck: .b, entryID: "later", generation: 4))
+            try expect(!state.markReady(cancelled))
         }
         test("cancel all invalidates delayed preparation callback generations") {
             var state = DualDeckState<String>()
             state.activate(deck: .a, entryID: "current", generation: 4)
-            state.beginPreparation(deck: .b, entryID: "next", generation: 9)
+            let cancelled = state.beginPreparation(deck: .b, entryID: "next")!
             state.cancelAll()
             try expectNil(state.activeDeck)
             try expectNil(state.committedTransition)
-            try expect(!state.markReady(deck: .b, entryID: "next", generation: 9))
+            try expect(!state.markReady(cancelled))
             try expectEqual(state[.a].phase, .empty)
             try expectEqual(state[.b].phase, .empty)
+        }
+        test("repreparing same identity after stop rejects delayed old callback") {
+            var state = DualDeckState<String>()
+            let old = state.beginPreparation(deck: .b, entryID: "same")!
+            state.cancelAll()
+            let fresh = state.beginPreparation(deck: .b, entryID: "same")!
+            try expect(fresh.generation > old.generation)
+            try expect(!state.markReady(old))
+            try expectEqual(state[.b].phase, .preparing)
+            try expect(state.markReady(fresh))
         }
     }
 }

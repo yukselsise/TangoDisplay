@@ -27,6 +27,18 @@ public struct DeckSnapshot<ID: Sendable & Equatable>: Sendable, Equatable {
     }
 }
 
+public struct DeckPreparationToken<ID: Sendable & Equatable>: Sendable, Equatable {
+    public let deck: DeckID
+    public let entryID: ID
+    public let generation: UInt64
+
+    init(deck: DeckID, entryID: ID, generation: UInt64) {
+        self.deck = deck
+        self.entryID = entryID
+        self.generation = generation
+    }
+}
+
 public struct DualDeckTransition<ID: Sendable & Equatable>: Sendable, Equatable {
     public let outgoingDeck: DeckID
     public let incomingDeck: DeckID
@@ -63,6 +75,7 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
     public private(set) var activeDeck: DeckID?
     public private(set) var committedTransition: DualDeckTransition<ID>?
     private var nextTransitionGeneration: UInt64 = 1
+    private var nextPreparationGeneration: UInt64 = 1
 
     public init() {
         decks = [DeckSnapshot(), DeckSnapshot()]
@@ -83,19 +96,20 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
     public mutating func beginPreparation(
         deck: DeckID,
         entryID: ID,
-        generation: UInt64,
         automaticTransitionAllowed: Bool = true
-    ) -> Bool {
-        guard automaticTransitionAllowed, deck != activeDeck else { return false }
+    ) -> DeckPreparationToken<ID>? {
+        guard automaticTransitionAllowed, deck != activeDeck else { return nil }
+        let generation = nextPreparationGeneration
+        nextPreparationGeneration &+= 1
         decks[index(of: deck)] = DeckSnapshot(phase: .preparing, entryID: entryID, generation: generation)
         committedTransition = nil
-        return true
+        return DeckPreparationToken(deck: deck, entryID: entryID, generation: generation)
     }
 
     @discardableResult
-    public mutating func markReady(deck: DeckID, entryID: ID, generation: UInt64) -> Bool {
-        guard matches(deck: deck, entryID: entryID, generation: generation, phase: .preparing) else { return false }
-        decks[index(of: deck)].phase = .ready
+    public mutating func markReady(_ token: DeckPreparationToken<ID>) -> Bool {
+        guard matches(deck: token.deck, entryID: token.entryID, generation: token.generation, phase: .preparing) else { return false }
+        decks[index(of: token.deck)].phase = .ready
         return true
     }
 
@@ -153,16 +167,16 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
     }
 
     @discardableResult
-    public mutating func markFailed(deck: DeckID, entryID: ID, generation: UInt64) -> Bool {
-        guard matches(deck: deck, entryID: entryID, generation: generation, phase: .preparing) else { return false }
-        decks[index(of: deck)].phase = .failed
+    public mutating func markFailed(_ token: DeckPreparationToken<ID>) -> Bool {
+        guard matches(deck: token.deck, entryID: token.entryID, generation: token.generation, phase: .preparing) else { return false }
+        decks[index(of: token.deck)].phase = .failed
         return true
     }
 
     @discardableResult
-    public mutating func recycle(deck: DeckID, entryID: ID, generation: UInt64) -> Bool {
-        guard matches(deck: deck, entryID: entryID, generation: generation), deck != activeDeck else { return false }
-        decks[index(of: deck)].phase = .recycling
+    public mutating func recycle(_ token: DeckPreparationToken<ID>) -> Bool {
+        guard matches(deck: token.deck, entryID: token.entryID, generation: token.generation), token.deck != activeDeck else { return false }
+        decks[index(of: token.deck)].phase = .recycling
         committedTransition = nil
         return true
     }
