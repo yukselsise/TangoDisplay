@@ -1455,12 +1455,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         // UI string (which prep doesn't update) — not a post-commitment gain
         // recalculation, just a label refresh plus a no-op volume write.
         applyReplayGain(for: next)
-        // KNOWN GAP: `loadEntry` pre-warms loudness analysis one entry ahead
-        // (`preAnalyseIfNeeded`) so auto-mode ReplayGain is cached before that
-        // entry becomes current. This path doesn't, so the entry two tracks
-        // ahead may show a brief "Analysing…" status instead of a cached value
-        // when it becomes current — latency-only, not a correctness or
-        // commitment-invariant issue. Worth adding here in a follow-up.
+        // Pre-warm loudness analysis for the entry two tracks ahead, mirroring
+        // `loadEntry`'s pre-warm so auto-mode ReplayGain is cached before that
+        // entry becomes current instead of showing "Analysing…".
+        if let twoAhead = setlist.entry(after: next.id) {
+            preAnalyseIfNeeded(twoAhead)
+        }
         applyOutgoingDeckTailReset(outgoingDeck)
         reportCurrentState()
         reportPlaylist()
