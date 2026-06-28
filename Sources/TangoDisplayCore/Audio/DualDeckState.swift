@@ -204,6 +204,33 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
         nextTransitionGeneration = checkedNext(after: nextTransitionGeneration)
     }
 
+    /// Invalidates the committed/uncommitted transition timeline and resets the
+    /// standby deck while leaving the active deck authoritative and unchanged.
+    ///
+    /// Used by seek (the smart-gap schedule was anchored to active-deck frame
+    /// positions a seek moves) and by device recovery (after a `rebuildOutputPath()`
+    /// the prior committed plan's frame anchors are meaningless, but the active
+    /// deck's identity must survive the rebuild). The active deck keeps its phase,
+    /// entry, and generation; only the *other* deck and the committed transition
+    /// are discarded. Returns the deck that remained active (if any).
+    @discardableResult
+    public mutating func invalidateTimelinesPreservingActive() -> DeckID? {
+        committedTransition = nil
+        nextTransitionGeneration = checkedNext(after: nextTransitionGeneration)
+        if let active = activeDeck {
+            reset(deck: active.other)
+            // `reset(deck:)` clears `committedTransition` (already nil here) but
+            // never touches `activeDeck` for a non-active deck, so the active
+            // deck's snapshot and `activeDeck` itself are preserved.
+            return active
+        }
+        // No active deck (e.g. recovery while stopped) — invalidate both so no
+        // stale standby survives the rebuild.
+        reset(deck: .a)
+        reset(deck: .b)
+        return nil
+    }
+
     @discardableResult
     public mutating func invalidateStandby(unlessEntryID expectedID: ID) -> Bool {
         guard let standby = activeDeck?.other ?? decks.indices.first(where: { decks[$0].phase != .empty }).map(deck(at:)),

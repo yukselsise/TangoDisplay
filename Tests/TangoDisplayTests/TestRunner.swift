@@ -1459,6 +1459,125 @@ func runStandbyPreparationTests() {
     }
 }
 
+// MARK: - Transport policy tests
+
+func runTransportPolicyTests() {
+    suite("TransportPolicy — manual Next") {
+        test("ready standby for the next entry promotes with no gap") {
+            let d = TransportPolicy.manualNext(
+                nextID: "next", willStop: false,
+                standbyPhase: .ready, standbyEntryID: "next"
+            )
+            try expectEqual(d, ManualNextDecision.promoteStandby(nextID: "next"))
+        }
+        test("scheduled standby for the next entry also promotes") {
+            let d = TransportPolicy.manualNext(
+                nextID: "next", willStop: false,
+                standbyPhase: .scheduled, standbyEntryID: "next"
+            )
+            try expectEqual(d, ManualNextDecision.promoteStandby(nextID: "next"))
+        }
+        test("standby still preparing falls back to a fresh load (no gap, no B reuse)") {
+            let d = TransportPolicy.manualNext(
+                nextID: "next", willStop: false,
+                standbyPhase: .preparing, standbyEntryID: "next"
+            )
+            try expectEqual(d, ManualNextDecision.loadFresh(nextID: "next"))
+        }
+        test("standby prepared for a different entry loads fresh") {
+            let d = TransportPolicy.manualNext(
+                nextID: "next", willStop: false,
+                standbyPhase: .ready, standbyEntryID: "stale-next"
+            )
+            try expectEqual(d, ManualNextDecision.loadFresh(nextID: "next"))
+        }
+        test("empty or failed standby loads fresh") {
+            for phase in [DeckPhase.empty, .failed, .active, .recycling] {
+                let d = TransportPolicy.manualNext(
+                    nextID: "next", willStop: false,
+                    standbyPhase: phase, standbyEntryID: "next"
+                )
+                try expectEqual(d, ManualNextDecision.loadFresh(nextID: "next"))
+            }
+        }
+        test("no next entry stops") {
+            let d = TransportPolicy.manualNext(
+                nextID: nil as String?, willStop: false,
+                standbyPhase: .ready, standbyEntryID: nil
+            )
+            try expectEqual(d, ManualNextDecision<String>.stop)
+        }
+        test("stop-after boundary stops even with a ready standby") {
+            let d = TransportPolicy.manualNext(
+                nextID: "next", willStop: true,
+                standbyPhase: .ready, standbyEntryID: "next"
+            )
+            try expectEqual(d, ManualNextDecision<String>.stop)
+        }
+    }
+
+    suite("TransportPolicy — jump / seek invalidation") {
+        test("Previous and direct play clear the standby") {
+            try expect(TransportPolicy.jumpClearsStandby())
+        }
+        test("seek invalidates the committed timeline") {
+            try expect(TransportPolicy.seekInvalidatesTimeline())
+        }
+    }
+
+    suite("DualDeckState — Stop invalidates both generations") {
+        test("cancelAll bumps both deck generations so stale callbacks are rejected") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 5)
+            let standby = state.beginPreparation(deck: .b, entryID: "next")!
+            let genABefore = state[.a].generation
+            let genBBefore = state[.b].generation
+            state.cancelAll()
+            try expectNil(state.activeDeck)
+            try expect(state[.a].generation != genABefore, "deck A generation must advance on stop")
+            try expect(state[.b].generation != genBBefore, "deck B generation must advance on stop")
+            try expect(!state.markReady(standby), "a delayed standby callback after stop must be rejected")
+        }
+    }
+
+    suite("DualDeckState — seek / device-recovery timeline invalidation") {
+        test("invalidating timelines preserves the active deck and resets standby") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 9)
+            let standby = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(standby)
+            let kept = state.invalidateTimelinesPreservingActive()
+            try expectEqual(kept, .a)
+            try expectEqual(state.activeDeck, .a)
+            try expectEqual(state[.a], DeckSnapshot(phase: .active, entryID: "current", generation: 9))
+            try expectEqual(state[.b].phase, .empty)
+            try expect(!state.markReady(standby), "the reset standby's old callback must be rejected")
+        }
+        test("invalidating a committed timeline drops the commitment but keeps the active deck") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            let prep = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(prep)
+            _ = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 0)
+            try expectNotNil(state.committedTransition)
+            let kept = state.invalidateTimelinesPreservingActive()
+            try expectEqual(kept, .a)
+            try expectNil(state.committedTransition)
+            try expectEqual(state.activeDeck, .a)
+        }
+        test("invalidating while stopped resets both decks and keeps no active") {
+            var state = DualDeckState<String>()
+            let prep = state.beginPreparation(deck: .b, entryID: "next")!
+            _ = state.markReady(prep)
+            let kept = state.invalidateTimelinesPreservingActive()
+            try expectNil(kept)
+            try expectEqual(state[.a].phase, .empty)
+            try expectEqual(state[.b].phase, .empty)
+            try expect(!state.markReady(prep))
+        }
+    }
+}
+
 // MARK: - DualDeckSchedule tests
 
 func runDualDeckScheduleTests() {
@@ -1558,6 +1677,7 @@ runSmartAutoGapTests()
 runDualDeckStateTests()
 runStandbyPreparationTests()
 runDualDeckScheduleTests()
+runTransportPolicyTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"
