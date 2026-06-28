@@ -1405,6 +1405,58 @@ func runStandbyPreparationTests() {
             ))
         }
     }
+    suite("Standby preparation failure — DualDeckState marks failure, no stale reuse") {
+        test("markFailed on a preparing token flips the deck's phase to .failed") {
+            var state = DualDeckState<String>()
+            guard let token = state.beginPreparation(deck: .b, entryID: "next") else {
+                throw TestFailure(message: "expected beginPreparation to return a token", file: #file, line: #line)
+            }
+            try expectEqual(state[.b].phase, .preparing)
+            try expect(state.markFailed(token))
+            try expectEqual(state[.b].phase, .failed)
+            try expectEqual(state[.b].entryID, "next")
+        }
+        test("markFailed does not flip phase when the token is stale (deck/entry/generation mismatch)") {
+            var state = DualDeckState<String>()
+            guard let token = state.beginPreparation(deck: .b, entryID: "next") else {
+                throw TestFailure(message: "expected beginPreparation to return a token", file: #file, line: #line)
+            }
+            // Deck B gets reset (e.g. cancelled/reprepared) before the failure callback runs.
+            state.reset(deck: .b)
+            try expect(!state.markFailed(token))
+            try expectEqual(state[.b].phase, .empty)
+        }
+        test("a failed preparation must not be reused by a fresh prepareStandbyIfNeeded() call") {
+            var state = DualDeckState<String>()
+            let configID = UUID()
+            guard let token = state.beginPreparation(deck: .b, entryID: "next") else {
+                throw TestFailure(message: "expected beginPreparation to return a token", file: #file, line: #line)
+            }
+            try expect(state.markFailed(token))
+            // The standby token that was tracking this now-failed preparation still
+            // names the same next entry/config — StandbyReusePolicy looks only at
+            // identity/config, so the failure itself must be caught by the deck's
+            // phase (no longer .ready/.preparing), not by canReuse returning false
+            // for identical identity. Confirm canReuse alone would say "reusable"...
+            try expect(StandbyReusePolicy.canReuse(
+                preparedNextID: "next", preparedPluginConfigurationID: configID,
+                observedNextID: "next", observedPluginConfigurationID: configID
+            ))
+            // ...which is exactly why prepareStandbyIfNeeded() must additionally
+            // consult DualDeckState's phase before trusting canReuse: a failed deck
+            // is neither .ready nor .preparing, so the real call site's reuse check
+            // (state.matches(..., phase: .preparing) used alongside canReuse) fails
+            // and a fresh beginPreparation() is triggered instead of reusing.
+            try expect(!state.matches(deck: .b, entryID: "next", generation: token.generation, phase: .preparing))
+            try expectEqual(state[.b].phase, .failed)
+            // A subsequent beginPreparation for the same deck/entry succeeds (fresh attempt).
+            guard let retryToken = state.beginPreparation(deck: .b, entryID: "next") else {
+                throw TestFailure(message: "expected a fresh beginPreparation after failure to succeed", file: #file, line: #line)
+            }
+            try expect(retryToken.generation != token.generation)
+            try expectEqual(state[.b].phase, .preparing)
+        }
+    }
 }
 
 // MARK: - Main entry point

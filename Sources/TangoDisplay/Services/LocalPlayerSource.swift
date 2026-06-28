@@ -1043,6 +1043,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             }
             let replayGain = await self.calculateStandbyReplayGain(for: next)
             guard !Task.isCancelled, stillValid() else { return }
+            let nextSilence = await AudioSilenceAnalyzer.shared.analyze(url: next.fileURL)
+            guard !Task.isCancelled, stillValid() else { return }
+            if let current = self.standbyPreparationToken,
+               current.matchesIdentity(deck: token.deck, currentID: token.currentID, nextID: token.nextID, generation: token.generation) {
+                self.standbyPreparationToken?.leadingSilence = nextSilence.leading
+            }
             do {
                 try await deck.prepare(entry: next, configuration: configuration, replayGain: replayGain)
             } catch {
@@ -1085,7 +1091,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             standbyPreparationToken = StandbyPreparationToken(
                 deck: token.deck, currentID: token.currentID, nextID: token.nextID,
                 generation: token.generation, settingsRevision: settingsRevision,
-                pluginConfigurationID: token.pluginConfigurationID
+                pluginConfigurationID: token.pluginConfigurationID,
+                leadingSilence: token.leadingSilence
             )
         }
         prepareStandbyIfNeeded()

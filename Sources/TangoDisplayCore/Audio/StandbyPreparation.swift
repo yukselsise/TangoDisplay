@@ -21,6 +21,12 @@ public struct StandbyPreparationToken<ID: Sendable & Equatable>: Sendable, Equat
     public let generation: UInt64
     public let settingsRevision: UInt64
     public let pluginConfigurationID: UUID?
+    /// Leading-silence duration (seconds) measured for `nextID`'s file by
+    /// `AudioSilenceAnalyzer`, populated once the standby preparation pipeline's
+    /// silence analysis step completes. `nil` until then. Not yet consumed by the
+    /// live transition path (that wiring is later work) — retained here so the
+    /// standby pipeline performs the analysis the brief calls for.
+    public var leadingSilence: Double?
 
     public init(
         deck: DeckID,
@@ -28,7 +34,8 @@ public struct StandbyPreparationToken<ID: Sendable & Equatable>: Sendable, Equat
         nextID: ID,
         generation: UInt64,
         settingsRevision: UInt64,
-        pluginConfigurationID: UUID?
+        pluginConfigurationID: UUID?,
+        leadingSilence: Double? = nil
     ) {
         self.deck = deck
         self.currentID = currentID
@@ -36,6 +43,7 @@ public struct StandbyPreparationToken<ID: Sendable & Equatable>: Sendable, Equat
         self.generation = generation
         self.settingsRevision = settingsRevision
         self.pluginConfigurationID = pluginConfigurationID
+        self.leadingSilence = leadingSilence
     }
 
     /// True when an in-flight token still describes the entry/deck/generation
