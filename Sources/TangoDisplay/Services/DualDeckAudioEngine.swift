@@ -93,6 +93,45 @@ final class DualDeckAudioEngine {
         id == .a ? deckA : deckB
     }
 
+    /// The shared common-output sample clock both decks render against. Used as
+    /// the single anchor for a sample-accurate transition.
+    var commonSampleRate: Double {
+        commonMixer.outputFormat(forBus: 0).sampleRate
+    }
+
+    /// Atomically anchors the outgoing deck's hard cut and the incoming deck's
+    /// start to one `AVAudioTime` on the shared output clock.
+    ///
+    /// `schedule` is computed and committed *before* this call. No file open,
+    /// reconnect, ReplayGain, plugin reconfiguration, or `engine.stop()` happens
+    /// here — only player-node scheduling against the already-attached graph, so
+    /// the transition stays sample-accurate.
+    ///
+    /// `anchorFrame` is the common-output sample time the cut/start frames are
+    /// relative to (typically a small lead ahead of the current render time so
+    /// both decks can be armed before the anchor passes).
+    func renderTransition(
+        outgoing: DeckID,
+        incoming: DeckID,
+        schedule: DualDeckSchedule,
+        anchorSampleTime: AVAudioFramePosition
+    ) throws {
+        let outgoingDeck = deck(outgoing)
+        let incomingDeck = deck(incoming)
+        let sampleRate = schedule.sampleRate
+
+        let startTime = AVAudioTime(
+            sampleTime: anchorSampleTime + schedule.startIncomingAtFrame,
+            atRate: sampleRate
+        )
+        // Incoming deck is armed first so it is primed before the cut frame.
+        try incomingDeck.scheduleStart(at: startTime)
+        incomingDeck.play(at: startTime)
+        // Outgoing deck is cut at the anchor's cut frame; its plugin tail is
+        // discarded deliberately (hardCut), preserving sample-accurate handoff.
+        outgoingDeck.hardCut()
+    }
+
     /// Debug/test seam for proving promotion never mutates the output graph.
     func assertStableGraph(
         requireRunning: Bool = false,

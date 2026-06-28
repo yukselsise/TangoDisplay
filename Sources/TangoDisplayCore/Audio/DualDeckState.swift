@@ -1,3 +1,5 @@
+import AVFoundation
+
 public enum DeckID: String, CaseIterable, Sendable {
     case a
     case b
@@ -222,5 +224,84 @@ public struct DualDeckState<ID: Sendable & Equatable>: Sendable {
             preconditionFailure("Dual-deck generation exhausted")
         }
         return next
+    }
+}
+
+/// Frame-domain plan anchoring the outgoing deck's hard cut and the incoming
+/// deck's start to one shared common-output timeline.
+///
+/// All frame positions are expressed in the common-output sample clock so two
+/// independently prepared `AVAudioPlayerNode`s can be scheduled against a single
+/// `AVAudioTime` anchor. `startIncomingAtFrame` equals `cutOutgoingAtFrame` plus
+/// the injected (deliberate) gap; with zero injected frames the incoming deck
+/// begins on the exact frame the outgoing deck is cut.
+public struct DualDeckSchedule: Equatable, Sendable {
+    public let cutOutgoingAtFrame: AVAudioFramePosition
+    public let startIncomingAtFrame: AVAudioFramePosition
+    public let injectedFrames: AVAudioFrameCount
+    public let sampleRate: Double
+
+    public init(
+        cutOutgoingAtFrame: AVAudioFramePosition,
+        startIncomingAtFrame: AVAudioFramePosition,
+        injectedFrames: AVAudioFrameCount,
+        sampleRate: Double
+    ) {
+        self.cutOutgoingAtFrame = cutOutgoingAtFrame
+        self.startIncomingAtFrame = startIncomingAtFrame
+        self.injectedFrames = injectedFrames
+        self.sampleRate = sampleRate
+    }
+
+    /// Converts a deliberate gap measured in seconds to whole common-output
+    /// frames. Non-finite or negative inputs yield zero injected frames.
+    public static func injectedFrames(
+        forSeconds seconds: Double,
+        sampleRate: Double
+    ) -> AVAudioFrameCount {
+        guard seconds.isFinite, seconds > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }
+        let frames = (seconds * sampleRate).rounded()
+        guard frames.isFinite, frames > 0, frames <= Double(AVAudioFrameCount.max) else { return 0 }
+        return AVAudioFrameCount(frames)
+    }
+
+    /// Commits a sample-accurate transition plan, anchoring both decks to the
+    /// `decodedEndFrame` of the outgoing deck on the common-output clock.
+    ///
+    /// Returns `nil` — rejecting the commitment — when:
+    /// - the committed transition no longer matches the requested current/next
+    ///   identity (a stale reorder/removal raced the commit),
+    /// - the live `settingsRevision` advanced past the transition's snapshot (a
+    ///   gap-only or plugin setting changed after standby preparation), or
+    /// - the incoming deck is not yet `.ready`/`.scheduled` (deck B is late;
+    ///   the caller must enter the degraded waiting state instead).
+    ///
+    /// No file open, reconnect, ReplayGain, plugin configuration, or engine stop
+    /// may occur after this returns a non-nil plan — every expensive operation
+    /// must already be complete by standby preparation.
+    public static func commit<ID: Equatable & Sendable>(
+        transition: DualDeckTransition<ID>?,
+        currentID: ID,
+        nextID: ID,
+        incomingPhase: DeckPhase,
+        liveSettingsRevision: UInt64,
+        injectedSeconds: Double,
+        decodedEndFrame: AVAudioFramePosition,
+        sampleRate: Double
+    ) -> DualDeckSchedule? {
+        guard let transition,
+              transition.currentID == currentID,
+              transition.nextID == nextID else { return nil }
+        guard transition.settingsRevision == liveSettingsRevision else { return nil }
+        guard incomingPhase == .scheduled || incomingPhase == .ready else { return nil }
+        guard sampleRate.isFinite, sampleRate > 0, decodedEndFrame >= 0 else { return nil }
+
+        let injected = injectedFrames(forSeconds: injectedSeconds, sampleRate: sampleRate)
+        return DualDeckSchedule(
+            cutOutgoingAtFrame: decodedEndFrame,
+            startIncomingAtFrame: decodedEndFrame + AVAudioFramePosition(injected),
+            injectedFrames: injected,
+            sampleRate: sampleRate
+        )
     }
 }

@@ -1459,6 +1459,92 @@ func runStandbyPreparationTests() {
     }
 }
 
+// MARK: - DualDeckSchedule tests
+
+func runDualDeckScheduleTests() {
+    func transition(
+        current: String = "current",
+        next: String = "next",
+        settingsRevision: UInt64 = 0
+    ) -> DualDeckTransition<String> {
+        DualDeckTransition(
+            outgoingDeck: .a, incomingDeck: .b,
+            currentID: current, nextID: next,
+            generation: 1, outgoingGeneration: 1, incomingGeneration: 1,
+            settingsRevision: settingsRevision
+        )
+    }
+
+    suite("DualDeckSchedule — frame conversion") {
+        test("three seconds equals 144000 frames at 48 kHz") {
+            try expectEqual(
+                DualDeckSchedule.injectedFrames(forSeconds: 3, sampleRate: 48_000),
+                144_000
+            )
+        }
+        test("zero padding yields zero injected frames") {
+            try expectEqual(DualDeckSchedule.injectedFrames(forSeconds: 0, sampleRate: 48_000), 0)
+        }
+        test("non-finite or negative seconds yield zero injected frames") {
+            try expectEqual(DualDeckSchedule.injectedFrames(forSeconds: .nan, sampleRate: 48_000), 0)
+            try expectEqual(DualDeckSchedule.injectedFrames(forSeconds: -1, sampleRate: 48_000), 0)
+        }
+    }
+
+    suite("DualDeckSchedule — commitment") {
+        test("anchors incoming start to decoded end plus injected frames") {
+            let schedule = DualDeckSchedule.commit(
+                transition: transition(), currentID: "current", nextID: "next",
+                incomingPhase: .scheduled, liveSettingsRevision: 0,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            )
+            try expectEqual(schedule?.cutOutgoingAtFrame, 1_000)
+            try expectEqual(schedule?.injectedFrames, 144_000)
+            try expectEqual(schedule?.startIncomingAtFrame, 145_000)
+        }
+        test("zero padding starts incoming on the cut frame") {
+            let schedule = DualDeckSchedule.commit(
+                transition: transition(), currentID: "current", nextID: "next",
+                incomingPhase: .ready, liveSettingsRevision: 0,
+                injectedSeconds: 0, decodedEndFrame: 5_000, sampleRate: 48_000
+            )
+            try expectEqual(schedule?.injectedFrames, 0)
+            try expectEqual(schedule?.startIncomingAtFrame, 5_000)
+            try expectEqual(schedule?.cutOutgoingAtFrame, 5_000)
+        }
+        test("stale next identity rejects the commitment") {
+            try expectNil(DualDeckSchedule.commit(
+                transition: transition(next: "next"), currentID: "current", nextID: "reordered",
+                incomingPhase: .scheduled, liveSettingsRevision: 0,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            ))
+        }
+        test("changed setting revision rejects the commitment") {
+            try expectNil(DualDeckSchedule.commit(
+                transition: transition(settingsRevision: 4), currentID: "current", nextID: "next",
+                incomingPhase: .scheduled, liveSettingsRevision: 5,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            ))
+        }
+        test("incoming deck not ready rejects the commitment") {
+            for phase in [DeckPhase.empty, .preparing, .failed, .active, .recycling] {
+                try expectNil(DualDeckSchedule.commit(
+                    transition: transition(), currentID: "current", nextID: "next",
+                    incomingPhase: phase, liveSettingsRevision: 0,
+                    injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+                ))
+            }
+        }
+        test("missing transition rejects the commitment") {
+            try expectNil(DualDeckSchedule.commit(
+                transition: nil as DualDeckTransition<String>?, currentID: "current", nextID: "next",
+                incomingPhase: .scheduled, liveSettingsRevision: 0,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            ))
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runCortinaDetectorTests()
@@ -1471,6 +1557,7 @@ runAudioUnitPluginTests()
 runSmartAutoGapTests()
 runDualDeckStateTests()
 runStandbyPreparationTests()
+runDualDeckScheduleTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"

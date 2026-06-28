@@ -200,6 +200,22 @@ final class PlaybackDeck {
         )
     }
 
+    /// Schedules this deck's prepared file from its start, anchored to a shared
+    /// `AVAudioTime`. Used by the sample-accurate transition; the file is opened
+    /// and the graph connected during standby preparation, so this only arms the
+    /// already-decoded player node.
+    func scheduleStart(at time: AVAudioTime) throws {
+        guard let audioFile else { throw PlaybackDeckError.notPrepared }
+        outputMixer.outputVolume = 1
+        playerNode.scheduleFile(audioFile, at: time)
+    }
+
+    /// Starts the player node at a shared anchor time. Separated from scheduling
+    /// so both decks can be armed before the anchor frame passes.
+    func play(at time: AVAudioTime? = nil) {
+        playerNode.play(at: time)
+    }
+
     func cancel() {
         preparationTask?.cancel()
         preparationTask = nil
