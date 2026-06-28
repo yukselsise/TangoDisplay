@@ -67,6 +67,10 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private let eq = AVAudioUnitEQ(numberOfBands: 5)
     private let replayGainMixer = AVAudioMixerNode()
     private let balanceMixer = AVAudioMixerNode()
+    // Constructed up front but kept dormant until the coordinator migration.
+    // This avoids a second live output path while legacy playback remains
+    // authoritative, while making graph setup failures visible before Task 4.
+    private var dualDeckAudioEngine: DualDeckAudioEngine?
     private var audioFile: AVAudioFile?
     private var seekOffset: Double = 0
 
@@ -146,6 +150,16 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         self.configStore = configStore
         super.init()
         setupAudioEngine()
+        do {
+            // Build the replacement graph now so graph/setup failures surface
+            // before the coordinator migration. It deliberately remains stopped;
+            // the legacy engine is still the sole live output owner in this task.
+            dualDeckAudioEngine = try MainActor.assumeIsolated {
+                try DualDeckAudioEngine()
+            }
+        } catch {
+            os_log(.error, "TangoDisplay: dual-deck graph setup failed: %{public}@", error.localizedDescription)
+        }
         levelMeter = AudioLevelMeter(mixerNode: audioEngine.mainMixerNode)
         playerNode.volume = max(0, min(1, volume))
         applyOutputDevice(settings.builtInOutputDeviceUID)

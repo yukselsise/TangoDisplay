@@ -23,3 +23,8 @@ BOOL TDTryAudioEngineDetach(AVAudioEngine *engine, AVAudioNode *node, NSString *
     @try { [engine detachNode:node]; return YES; }
     @catch (NSException *ex) { if (outReason) *outReason = ex.reason ?: ex.name; return NO; }
 }
+
+BOOL TDTryAudioEngineDisconnectOutput(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason) {
+    @try { [engine disconnectNodeOutput:node]; return YES; }
+    @catch (NSException *ex) { if (outReason) *outReason = ex.reason ?: ex.name; return NO; }
+}

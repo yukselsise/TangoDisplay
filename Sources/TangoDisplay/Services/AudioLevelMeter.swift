@@ -26,7 +26,8 @@ final class AudioLevelMeter: ObservableObject {
     }
 
     func reinstallTap() {
-        mixerNode.removeTap(onBus: 0)
+        if tapInstalled { mixerNode.removeTap(onBus: 0) }
+        tapInstalled = false
         installTap()
     }
 
@@ -52,6 +53,7 @@ final class AudioLevelMeter: ObservableObject {
     private let mixerNode: AVAudioMixerNode
     private let rawLock = OSAllocatedUnfairLock(initialState: RawLevels())
     private var displayTimer: Timer?
+    private var tapInstalled = false
 
     private var leftPeakState: PeakState = .holding(value: 0, since: .distantPast)
     private var rightPeakState: PeakState = .holding(value: 0, since: .distantPast)
@@ -78,9 +80,11 @@ final class AudioLevelMeter: ObservableObject {
     // MARK: - Private
 
     private func installTap() {
+        guard !tapInstalled else { return }
         mixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
             self?.processBuffer(buffer)
         }
+        tapInstalled = true
     }
 
     private func processBuffer(_ buffer: AVAudioPCMBuffer) {

@@ -318,7 +318,10 @@ final class PlaybackDeck {
         engine.disconnectNodeOutput(eq)
         engine.disconnectNodeOutput(replayGainMixer)
         pluginRuntimes.forEach { engine.disconnectNodeOutput($0.unit) }
-        engine.disconnectNodeOutput(outputMixer)
+        // `outputMixer` belongs to this deck, but its outbound connection belongs
+        // to the stable dual-deck graph. Track preparation may rebuild only the
+        // deck-internal chain; disconnecting this edge would silently remove the
+        // deck from the shared output until an output-device rebuild.
     }
 
     private func detachPlugins(from engine: AVAudioEngine) throws {

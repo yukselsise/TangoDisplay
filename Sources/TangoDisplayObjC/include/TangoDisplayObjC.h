@@ -9,3 +9,4 @@ BOOL TDTryAudioEngineConnect(AVAudioEngine *engine,
                               NSString     **outReason);
 BOOL TDTryAudioEngineAttach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason);
 BOOL TDTryAudioEngineDetach(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason);
+BOOL TDTryAudioEngineDisconnectOutput(AVAudioEngine *engine, AVAudioNode *node, NSString **outReason);
