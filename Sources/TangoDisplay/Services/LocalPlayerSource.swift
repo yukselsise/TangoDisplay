@@ -137,6 +137,22 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private var audioStartSampleTime: AVAudioFramePosition = 0
     private var silencePending: Bool = false
 
+    // MARK: - Private — dual-deck standby preparation
+    //
+    // Deck B preparation runs ahead of an exact transition: it opens the next
+    // unplayed entry's file, analyses silence, calculates ReplayGain, and
+    // instantiates deck-local plugins on `dualDeckAudioEngine`'s standby
+    // (non-legacy) deck. None of this is wired into live playback yet — the
+    // legacy single-deck path above remains the sole audible output owner.
+    // `dualDeckState` exists purely to validate async work against
+    // current/next/deck/generation so a stale callback can never corrupt state.
+
+    private var dualDeckState = DualDeckState<UUID>()
+    private var standbyPreparationToken: StandbyPreparationToken<UUID>?
+    private var standbyDeckPreparationToken: DeckPreparationToken<UUID>?
+    private var standbyPreparationTask: Task<Void, Never>?
+    private(set) var settingsRevision: UInt64 = 0
+
     // MARK: - Private — loudness analysis
 
     private var inFlightAnalysisURLs = Set<URL>()
@@ -932,6 +948,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private func prepareAutoGap(current: SetlistEntry) {
         autoGapAnalysisTask?.cancel()
         preparedAutoGap = nil
+        prepareStandbyIfNeeded()
         guard let next = setlist.firstUnplayed(after: current.id) else { return }
         let currentID = current.id
         let nextID = next.id
@@ -950,6 +967,147 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 self.queuePreparedAutoGapIfEligible(currentID: currentID, nextID: nextID)
             }
         }
+    }
+
+    // MARK: - Private — dual-deck standby preparation
+
+    /// Prepares the standby deck (deck B while deck A plays the legacy single-deck
+    /// path) ahead of an exact transition to the real next unplayed entry. Cancels
+    /// any in-flight preparation, observes reorder/removal/plugin changes, and
+    /// validates current/next/deck/generation after every async boundary so a
+    /// stale callback can never corrupt `dualDeckState`. Does not touch the
+    /// audible legacy graph.
+    private func prepareStandbyIfNeeded() {
+        guard let dualDeckAudioEngine else { return }
+        guard let currentID = currentEntryID,
+              let current = setlist.entries.first(where: { $0.id == currentID }) else {
+            cancelStandbyPreparation()
+            return
+        }
+        guard let next = setlist.firstUnplayed(after: currentID) else {
+            cancelStandbyPreparation()
+            return
+        }
+        let willStop = currentID == setlist.stopAfterEntryID
+            || (current.isPerformance && settings.stopAfterEachPerformanceTrack)
+        guard StandbyPreparationPolicy.shouldPrepare(willStop: willStop) else {
+            cancelStandbyPreparation()
+            return
+        }
+
+        let standbyDeckID = dualDeckState.activeDeck?.other ?? .b
+        let nextConfigID = next.pluginConfigurationID ?? configStore.defaultConfigurationID
+
+        // Reuse the already-ready standby deck when its identity and plugin
+        // configuration still match the freshly observed next entry.
+        if let token = standbyPreparationToken,
+           token.matchesIdentity(deck: standbyDeckID, currentID: currentID, nextID: next.id, generation: token.generation),
+           StandbyReusePolicy.canReuse(
+               preparedNextID: token.nextID,
+               preparedPluginConfigurationID: token.pluginConfigurationID,
+               observedNextID: next.id,
+               observedPluginConfigurationID: nextConfigID
+           ) {
+            return
+        }
+
+        cancelStandbyPreparation()
+
+        guard let preparationToken = dualDeckState.beginPreparation(deck: standbyDeckID, entryID: next.id) else {
+            return
+        }
+        standbyDeckPreparationToken = preparationToken
+        let token = StandbyPreparationToken<UUID>(
+            deck: standbyDeckID,
+            currentID: currentID,
+            nextID: next.id,
+            generation: preparationToken.generation,
+            settingsRevision: settingsRevision,
+            pluginConfigurationID: nextConfigID
+        )
+        standbyPreparationToken = token
+        let configuration = nextConfigID.flatMap { configStore.configuration(id: $0) }
+        // `LocalPlayerSource` runs on the main thread (the legacy single-deck path
+        // is not actor-isolated), so this access is safe; `PlaybackDeck`/`DualDeckAudioEngine`
+        // are `@MainActor`-isolated ahead of the coordinator migration.
+        let deck = MainActor.assumeIsolated { dualDeckAudioEngine.deck(standbyDeckID) }
+
+        standbyPreparationTask = Task { [weak self] in
+            guard let self else { return }
+            let stillValid: () -> Bool = { [weak self] in
+                guard let self else { return false }
+                return self.dualDeckState.matches(
+                    deck: token.deck, entryID: token.nextID, generation: token.generation, phase: .preparing
+                ) && self.currentEntryID == token.currentID
+                    && self.setlist.firstUnplayed(after: token.currentID)?.id == token.nextID
+            }
+            let replayGain = await self.calculateStandbyReplayGain(for: next)
+            guard !Task.isCancelled, stillValid() else { return }
+            do {
+                try await deck.prepare(entry: next, configuration: configuration, replayGain: replayGain)
+            } catch {
+                guard stillValid() else { return }
+                os_log(.error, "TangoDisplay: standby deck preparation failed: %{public}@", error.localizedDescription)
+                _ = self.dualDeckState.markFailed(preparationToken)
+                if self.standbyDeckPreparationToken == preparationToken {
+                    self.standbyDeckPreparationToken = nil
+                    self.standbyPreparationToken = nil
+                }
+                return
+            }
+            guard stillValid() else { return }
+            _ = self.dualDeckState.markReady(preparationToken)
+        }
+    }
+
+    /// Cancels any in-flight standby preparation and resets deck B's policy state.
+    /// Does not reopen or recycle the deck's file unless preparation had advanced
+    /// past `.empty` — recycling is left to the transition/promotion path.
+    private func cancelStandbyPreparation() {
+        standbyPreparationTask?.cancel()
+        standbyPreparationTask = nil
+        if let token = standbyDeckPreparationToken {
+            dualDeckState.cancel(deck: token.deck)
+        }
+        standbyDeckPreparationToken = nil
+        standbyPreparationToken = nil
+    }
+
+    /// Recomputes the uncommitted timeline for a gap-only settings change
+    /// (auto-gap duration/enabled/first-track or stop-after-performance) without
+    /// reopening deck B's file. Bumps `settingsRevision` so `DualDeckState.promote`
+    /// can detect and discard a stale committed transition, then re-evaluates
+    /// standby eligibility purely from policy — the already-opened file, analysed
+    /// silence, and instantiated plugins are untouched.
+    private func handleGapSettingsRevisionChange() {
+        settingsRevision &+= 1
+        if let token = standbyPreparationToken {
+            standbyPreparationToken = StandbyPreparationToken(
+                deck: token.deck, currentID: token.currentID, nextID: token.nextID,
+                generation: token.generation, settingsRevision: settingsRevision,
+                pluginConfigurationID: token.pluginConfigurationID
+            )
+        }
+        prepareStandbyIfNeeded()
+    }
+
+    private func calculateStandbyReplayGain(for entry: SetlistEntry) async -> Float {
+        let rgSettings = ReplayGainSettings(
+            mode: settings.replayGainMode,
+            preampDb: Double(settings.replayGainPreampDb),
+            preventClipping: settings.replayGainPreventClipping,
+            targetLoudnessLufs: Double(settings.replayGainTargetLufs)
+        )
+        let info = entry.track.replayGainInfo
+        let cacheKey = loudnessCacheKey(for: entry)
+        let analysis = cacheKey.flatMap { loudnessCache.result(for: $0) }
+        let result = calculateReplayGain(info: info, analysis: analysis, settings: rgSettings)
+        var finalGain = result.linearGain
+        let cortinaCutDb = settings.cortinaVolumeReductionDb
+        if cortinaCutDb < 0, settings.makeDetector().isCortina(genre: entry.track.genre) {
+            finalGain *= Float(pow(10.0, cortinaCutDb / 20.0))
+        }
+        return finalGain
     }
 
     private func queuePreparedAutoGapIfEligible(currentID: UUID, nextID: UUID) {
@@ -1764,7 +1922,33 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 // Always report so AppState recalculates tanda position on any entries
                 // change, including pure reorders that don't trigger any branch above.
                 self.reportPlaylist()
+                // A reorder, removal, or per-entry plugin-configuration change may have
+                // invalidated the standby deck's identity; re-evaluate and reuse or cancel.
+                self.prepareStandbyIfNeeded()
             }
+            .store(in: &cancellables)
+
+        // Gap-only setting changes recompute the uncommitted timeline without
+        // reopening deck B's file — only `settingsRevision` advances.
+        settings.$autoGapEnabled
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleGapSettingsRevisionChange() }
+            .store(in: &cancellables)
+        settings.$autoGapDuration
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleGapSettingsRevisionChange() }
+            .store(in: &cancellables)
+        settings.$autoGapIgnoreFirstTrack
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleGapSettingsRevisionChange() }
+            .store(in: &cancellables)
+        settings.$stopAfterEachPerformanceTrack
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleGapSettingsRevisionChange() }
             .store(in: &cancellables)
     }
 

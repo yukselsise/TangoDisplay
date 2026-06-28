@@ -1343,6 +1343,70 @@ func runDualDeckStateTests() {
     }
 }
 
+func runStandbyPreparationTests() {
+    suite("StandbyPreparationPolicy — should prepare") {
+        test("real next unplayed entry with no stop condition is eligible") {
+            try expect(StandbyPreparationPolicy.shouldPrepare(willStop: false))
+        }
+        test("stop-after or performance suppression blocks preparation") {
+            try expect(!StandbyPreparationPolicy.shouldPrepare(willStop: true))
+        }
+    }
+    suite("StandbyPreparationToken — async-boundary validation") {
+        test("identity match requires deck, current, next, and generation to agree") {
+            let configID = UUID()
+            let token = StandbyPreparationToken<String>(
+                deck: .b, currentID: "current", nextID: "next",
+                generation: 7, settingsRevision: 1, pluginConfigurationID: configID
+            )
+            try expect(token.matchesIdentity(deck: .b, currentID: "current", nextID: "next", generation: 7))
+            try expect(!token.matchesIdentity(deck: .a, currentID: "current", nextID: "next", generation: 7))
+            try expect(!token.matchesIdentity(deck: .b, currentID: "stale", nextID: "next", generation: 7))
+            try expect(!token.matchesIdentity(deck: .b, currentID: "current", nextID: "other", generation: 7))
+            try expect(!token.matchesIdentity(deck: .b, currentID: "current", nextID: "next", generation: 8))
+        }
+        test("settings revision changes do not affect identity match") {
+            let token = StandbyPreparationToken<String>(
+                deck: .b, currentID: "current", nextID: "next",
+                generation: 3, settingsRevision: 1, pluginConfigurationID: nil
+            )
+            // A gap-only setting change bumps settingsRevision but must not force a reopen.
+            try expect(token.matchesIdentity(deck: .b, currentID: "current", nextID: "next", generation: 3))
+            try expectEqual(token.settingsRevision, 1)
+        }
+    }
+    suite("StandbyReusePolicy — retain B only when identity and configuration match") {
+        test("reorder that leaves next entry unchanged retains the prepared deck") {
+            let configID = UUID()
+            try expect(StandbyReusePolicy.canReuse(
+                preparedNextID: "next", preparedPluginConfigurationID: configID,
+                observedNextID: "next", observedPluginConfigurationID: configID
+            ))
+        }
+        test("reorder that changes the next entry cancels the prepared deck") {
+            let configID = UUID()
+            try expect(!StandbyReusePolicy.canReuse(
+                preparedNextID: "next", preparedPluginConfigurationID: configID,
+                observedNextID: "other", observedPluginConfigurationID: configID
+            ))
+        }
+        test("removal of the next entry cancels the prepared deck") {
+            try expect(!StandbyReusePolicy.canReuse(
+                preparedNextID: "next", preparedPluginConfigurationID: nil,
+                observedNextID: nil, observedPluginConfigurationID: nil
+            ))
+        }
+        test("plugin configuration change on the same next entry cancels the prepared deck") {
+            let originalConfigID = UUID()
+            let newConfigID = UUID()
+            try expect(!StandbyReusePolicy.canReuse(
+                preparedNextID: "next", preparedPluginConfigurationID: originalConfigID,
+                observedNextID: "next", observedPluginConfigurationID: newConfigID
+            ))
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runCortinaDetectorTests()
@@ -1354,6 +1418,7 @@ runAutoReplayGainTests()
 runAudioUnitPluginTests()
 runSmartAutoGapTests()
 runDualDeckStateTests()
+runStandbyPreparationTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"
