@@ -73,6 +73,43 @@ final class PlaybackDeck {
         pluginSlots = slots
     }
 
+    /// The deck-internal node whose output currently feeds `outputMixer` — the
+    /// last of this deck's own prepared plugin chain, or `replayGainMixer` when
+    /// no deck plugins are attached. The legacy, session-long-lived plugin
+    /// editor chain (`LocalPlayerSource.slotRuntimes`) is a separate, older
+    /// system that is NOT unified with this deck's `pluginRuntimes` (Task 5
+    /// decision: keep its one-AU-instance-per-session lifecycle as-is). It
+    /// inserts itself downstream of this node and re-points `outputMixer`'s
+    /// input at its own chain tail — see `pointOutputMixer(at:)`.
+    var pluginChainTail: AVAudioNode {
+        pluginRuntimes.last?.unit ?? replayGainMixer
+    }
+
+    /// Re-points `outputMixer`'s sole input connection at `node`. Used by the
+    /// legacy plugin-editor chain to splice itself in after `pluginChainTail`,
+    /// and to restore the direct `pluginChainTail -> outputMixer` edge when the
+    /// legacy chain is empty/disabled. Never disconnects `outputMixer`'s output
+    /// — that edge belongs to the stable dual-deck graph.
+    func pointOutputMixer(at node: AVAudioNode, format: AVAudioFormat?) throws {
+        guard let engine else { throw PlaybackDeckError.notAttached }
+        engine.disconnectNodeInput(outputMixer)
+        try safeConnect(engine, node, outputMixer, format)
+    }
+
+    /// Reconnects this deck's internal chain (`playerNode -> eq -> replayGainMixer
+    /// -> [this deck's own prepared plugins, if any] -> outputMixer`) for a
+    /// synchronous manual load (play/jumpTo/skipPrevious — Task 6 territory).
+    /// Manual loads never call `prepare()`, so `pluginRuntimes` is whatever this
+    /// deck already has prepared (normally empty for a manually-loaded deck).
+    /// Only this deck's own nodes are touched; `outputMixer`'s outbound edge and
+    /// the shared `commonMixer`/`balanceMixer` path are never disturbed, and the
+    /// engine is never stopped.
+    func connectForManualLoad(format: AVAudioFormat) throws {
+        guard let engine else { throw PlaybackDeckError.notAttached }
+        disconnectGraph(from: engine)
+        try connectGraph(in: engine, format: format, plugins: pluginRuntimes)
+    }
+
     func attach(to engine: AVAudioEngine) throws {
         if self.engine === engine {
             guard cleanupFailure != nil else { return }
@@ -204,10 +241,19 @@ final class PlaybackDeck {
     /// `AVAudioTime`. Used by the sample-accurate transition; the file is opened
     /// and the graph connected during standby preparation, so this only arms the
     /// already-decoded player node.
-    func scheduleStart(at time: AVAudioTime) throws {
+    func scheduleStart(
+        at time: AVAudioTime,
+        onPlaybackCompleted: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)? = nil
+    ) throws {
         guard let audioFile else { throw PlaybackDeckError.notPrepared }
         outputMixer.outputVolume = 1
-        playerNode.scheduleFile(audioFile, at: time)
+        if let onPlaybackCompleted {
+            playerNode.scheduleFile(audioFile, at: time, completionCallbackType: .dataPlayedBack) { type in
+                onPlaybackCompleted(type)
+            }
+        } else {
+            playerNode.scheduleFile(audioFile, at: time)
+        }
     }
 
     /// Starts the player node at a shared anchor time. Separated from scheduling

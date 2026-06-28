@@ -7,6 +7,14 @@ import OSLog
 import TangoDisplayCore
 import TangoDisplayObjC
 
+// `@MainActor`: this class was already only ever constructed/used from the main
+// thread in practice (flagged as a latent gap in Task 3's review). The Task 5
+// migration to `DualDeckAudioEngine`/`PlaybackDeck` — both `@MainActor`-isolated
+// — makes that assumption load-bearing everywhere, not just at the one
+// `MainActor.assumeIsolated` seam Task 4 used for standby prep. Annotating here
+// makes the existing real-world constraint explicit and checked by the
+// compiler instead of asserted ad hoc.
+@MainActor
 final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
 
     // MARK: - MusicPlayerSource callbacks
@@ -43,8 +51,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private var sleepAssertionToken: NSObjectProtocol?
 
     var volume: Float {
-        get { playerNode.volume }
-        set { playerNode.volume = max(0, min(1, newValue)) }
+        get { activeDeck.playerNode.volume }
+        set { activeDeck.playerNode.volume = max(0, min(1, newValue)) }
     }
 
     private var _balance: Float = 0
@@ -61,22 +69,37 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     @Published private(set) var isChangingDevice: Bool = false
 
     // MARK: - Private — audio engine
+    //
+    // `DualDeckAudioEngine` is the sole live output owner (Task 5 migration).
+    // The legacy single-deck `audioEngine`/`playerNode`/`eq`/`replayGainMixer`/
+    // `balanceMixer` graph has been retired; transport, seek, output-device
+    // switching, ReplayGain, and EQ all target `activeDeck` (deck A or B,
+    // whichever `dualDeckState.activeDeck` currently is). `audioFile`/`audioFile`
+    // tracking still lives here for now (seek math, duration) — it always
+    // mirrors `activeDeck.audioFile`.
 
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
-    private let eq = AVAudioUnitEQ(numberOfBands: 5)
-    private let replayGainMixer = AVAudioMixerNode()
-    private let balanceMixer = AVAudioMixerNode()
-    // Constructed up front but kept dormant until the coordinator migration.
-    // This avoids a second live output path while legacy playback remains
-    // authoritative, while making graph setup failures visible before Task 4.
-    private var dualDeckAudioEngine: DualDeckAudioEngine?
+    /// Force-unwrapped: constructed in `init`, and every later use happens
+    /// after `init` returns. A construction failure is a fatal startup error —
+    /// there is no fallback output path once the legacy graph is retired.
+    private var dualDeckAudioEngine: DualDeckAudioEngine!
     private var audioFile: AVAudioFile?
     private var seekOffset: Double = 0
 
+    /// The currently audible deck. Manual transport (Task 6 will generalize
+    /// this to dual-deck-aware promote-without-gap semantics) and automatic
+    /// transitions both resolve through this single accessor so there is one
+    /// place that defines "the deck the user is listening to right now."
+    private var activeDeck: PlaybackDeck {
+        dualDeckAudioEngine.deck(dualDeckState.activeDeck ?? .a)
+    }
+
+    private var standbyDeck: PlaybackDeck {
+        dualDeckAudioEngine.deck((dualDeckState.activeDeck ?? .a).other)
+    }
+
     // MARK: - Level meter
 
-    private(set) var levelMeter: AudioLevelMeter!
+    var levelMeter: AudioLevelMeter { dualDeckAudioEngine.levelMeter }
 
     // MARK: - Private — state
 
@@ -131,11 +154,20 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private var currentPaddingFrames: AVAudioFrameCount = 0
     private var preparedAutoGap: PreparedAutoGap<UUID>?
     private var autoGapAnalysisTask: Task<Void, Never>?
-    private var pendingAutoGapIdentity: PendingAutoGapIdentity<UUID>?
-    private var autoGapQueuedForGeneration: Int?
     private var noGapPreparedForGeneration: Int?
     private var audioStartSampleTime: AVAudioFramePosition = 0
     private var silencePending: Bool = false
+
+    /// Set once a transition has been committed (`DualDeckSchedule.commit`
+    /// returned non-nil and `renderTransition`/`promote` ran) for the current
+    /// `scheduleGeneration`, so `handleTrackEnd` and a second commit attempt
+    /// both know the handoff already happened and must not double-fire.
+    private var committedTransitionGeneration: Int?
+    /// Set while waiting for a late standby deck B (degraded-waiting fallback).
+    /// `handleTrackEnd` checks this so the "no automatic transition applies"
+    /// branches don't also fire while a wait is already in flight.
+    private var degradedWaitingForGeneration: Int?
+    private var degradedWaitingTask: Task<Void, Never>?
 
     // MARK: - Private — dual-deck standby preparation
     //
@@ -165,19 +197,19 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         self.settings = settings
         self.configStore = configStore
         super.init()
-        setupAudioEngine()
         do {
-            // Build the replacement graph now so graph/setup failures surface
-            // before the coordinator migration. It deliberately remains stopped;
-            // the legacy engine is still the sole live output owner in this task.
-            dualDeckAudioEngine = try MainActor.assumeIsolated {
-                try DualDeckAudioEngine()
-            }
+            dualDeckAudioEngine = try DualDeckAudioEngine()
         } catch {
-            os_log(.error, "TangoDisplay: dual-deck graph setup failed: %{public}@", error.localizedDescription)
+            // Fatal: there is no fallback output path once the legacy single-deck
+            // graph is retired. Surface loudly rather than silently play nothing.
+            os_log(.fault, "TangoDisplay: dual-deck graph setup failed: %{public}@", error.localizedDescription)
+            fatalError("TangoDisplay: dual-deck graph setup failed: \(error.localizedDescription)")
         }
-        levelMeter = AudioLevelMeter(mixerNode: audioEngine.mainMixerNode)
-        playerNode.volume = max(0, min(1, volume))
+        setupAudioEngine()
+        // No deck is the user-audible "active" one until the first `loadEntry`-equivalent
+        // call; `activeDeck` defaults to deck A via `dualDeckState.activeDeck ?? .a` until
+        // then, so pre-playback setup (volume/output device/EQ/balance) below lands on deck A.
+        activeDeck.playerNode.volume = max(0, min(1, volume))
         applyOutputDevice(settings.builtInOutputDeviceUID)
         applyEQGains(settings.eqGains)
         _balance = max(-1, min(1, settings.builtInBalance))
@@ -187,29 +219,24 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     // MARK: - Audio engine setup
 
     private func setupAudioEngine() {
-        audioEngine.attach(playerNode)
-        audioEngine.attach(eq)
-        audioEngine.attach(replayGainMixer)
-        audioEngine.attach(balanceMixer)
-        connectAudioGraph(format: nil)
-
-        let frequencies: [Float]          = [60, 250, 1000, 4000, 12000]
-        let filterTypes: [AVAudioUnitEQFilterType] = [.lowShelf, .parametric, .parametric, .parametric, .highShelf]
-        for (i, band) in eq.bands.enumerated() {
-            band.filterType = filterTypes[i]
-            band.frequency  = frequencies[i]
-            band.bandwidth  = 1.0
-            band.gain       = 0.0
-            band.bypass     = false
+        for deck in [dualDeckAudioEngine.deckA, dualDeckAudioEngine.deckB] {
+            for (i, band) in deck.eq.bands.enumerated() {
+                let frequencies: [Float] = [60, 250, 1000, 4000, 12000]
+                let filterTypes: [AVAudioUnitEQFilterType] = [.lowShelf, .parametric, .parametric, .parametric, .highShelf]
+                band.filterType = filterTypes[i]
+                band.frequency  = frequencies[i]
+                band.bandwidth  = 1.0
+                band.gain       = 0.0
+                band.bypass     = false
+            }
         }
-
-        try? audioEngine.start()
+        try? dualDeckAudioEngine.startIfNeeded()
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
             name: .AVAudioEngineConfigurationChange,
-            object: audioEngine
+            object: dualDeckAudioEngine.engine
         )
     }
 
@@ -222,11 +249,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             self.scheduleGeneration += 1
             // Graph rewire must happen with engine stopped; engine is already stopped when this fires.
             if self.audioFile != nil {
-                self.connectAudioGraph(format: self.audioFile?.processingFormat)
+                self.reconnectLegacyPluginChain(format: self.audioFile?.processingFormat)
             }
 
             // Capture all state before leaving the main thread.
-            guard let audioUnit = self.audioEngine.outputNode.audioUnit else { return }
+            guard let audioUnit = self.dualDeckAudioEngine.engine.outputNode.audioUnit else { return }
             let uid = self.settings.builtInOutputDeviceUID
             let hogEnabled = self.settings.builtInHogMode
             let wasPlaying = self.isActivePlaying
@@ -249,11 +276,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 }
 
                 if deviceStolenByOther && wasPlaying {
-                    self.playerNode.stop()
+                    DispatchQueue.main.async { self.activeDeck.playerNode.stop() }
                 }
 
                 do {
-                    try self.audioEngine.start()
+                    try self.dualDeckAudioEngine.startIfNeeded()
                 } catch {
                     os_log(.error, "TangoDisplay: engine restart failed: %{public}@", error.localizedDescription)
                 }
@@ -273,7 +300,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                         self.applyBalance(self._balance)
                         if self.audioFile != nil {
                             self.seekTo(savedElapsed)
-                            if wasPlaying { self.playerNode.play() }
+                            if wasPlaying { self.activeDeck.playerNode.play() }
                         }
                     }
                 }
@@ -295,10 +322,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         hogModeConflict = false
 
         // Capture values on the calling thread (main) before dispatching blocking work.
-        guard let audioUnit = audioEngine.outputNode.audioUnit else { return }
+        guard let audioUnit = dualDeckAudioEngine.engine.outputNode.audioUnit else { return }
         let wasPlaying = isActivePlaying
         let savedElapsed = elapsed
         let hogEnabled = settings.builtInHogMode
+        let engine = dualDeckAudioEngine.engine
         // Invalidate any pending dataPlayedBack callbacks before stopping the player node,
         // so the stop doesn't spuriously fire handleTrackEnd → skipNext().
         scheduleGeneration += 1
@@ -315,15 +343,15 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             }
 
             // CoreAudio stop/start can block — must be off the main thread.
-            if self.audioEngine.isRunning {
-                self.playerNode.stop()
-                self.audioEngine.stop()
+            if engine.isRunning {
+                DispatchQueue.main.sync { self.activeDeck.playerNode.stop() }
+                engine.stop()
             }
 
             self.setOutputDeviceProperty(audioUnit: audioUnit, uid: uid)
 
             do {
-                try self.audioEngine.start()
+                try engine.start()
 
                 // Acquire hog mode on the audio queue (CoreAudio property set).
                 if hogEnabled && !uid.isEmpty {
@@ -341,7 +369,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                     self.levelMeter.reinstallTap()
                     if self.audioFile != nil {
                         self.seekTo(savedElapsed)
-                        if wasPlaying { self.playerNode.play() }
+                        if wasPlaying { self.activeDeck.playerNode.play() }
                     }
                     self.isChangingDevice = false
                 }
@@ -406,14 +434,25 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
     }
 
+    /// Applies EQ to both decks — EQ is a per-engine output setting, not a
+    /// per-track one, so both decks must always carry identical gains; a
+    /// promotion must never reveal a flat EQ on the newly active deck.
     private func applyEQGains(_ gains: [Float]) {
-        for (i, band) in eq.bands.enumerated() where i < gains.count {
-            band.gain = gains[i]
+        for deck in [dualDeckAudioEngine.deckA, dualDeckAudioEngine.deckB] {
+            for (i, band) in deck.eq.bands.enumerated() where i < gains.count {
+                band.gain = gains[i]
+            }
         }
     }
 
     private func applyBalance(_ pan: Float) {
-        balanceMixer.pan = pan
+        dualDeckAudioEngine.balance = pan
+    }
+
+    private func setEQBandGain(_ index: Int, _ gain: Float) {
+        for deck in [dualDeckAudioEngine.deckA, dualDeckAudioEngine.deckB] {
+            deck.eq.bands[index].gain = gain
+        }
     }
 
     private func applyReplayGain(for entry: SetlistEntry) {
@@ -451,7 +490,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 finalGain *= Float(pow(10.0, cortinaCutDb / 20.0))
             }
         }
-        replayGainMixer.outputVolume = finalGain
+        activeDeck.replayGainMixer.outputVolume = finalGain
 
         let analysisInFlight = inFlightAnalysisURLs.contains(entry.fileURL)
         replayGainStatus = replayGainStatusString(result: result, settings: rgSettings,
@@ -485,7 +524,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
     }
 
-    private static func analysisStatusForError(_ error: Error) -> String {
+    private nonisolated static func analysisStatusForError(_ error: Error) -> String {
         if error is CancellationError { return "ReplayGain: Cancelled" }
         switch error as? LoudnessAnalysisError {
         case .cannotOpenFile:    return "ReplayGain: Cannot read file"
@@ -582,10 +621,10 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         isCurrentEntryMarkedAsPlayed = false
         isActivePlaying = false
         replayGainStatus = ""
-        replayGainMixer.outputVolume = 1.0
+        activeDeck.replayGainMixer.outputVolume = 1.0
         inFlightAnalysisURLs.removeAll()
-        playerNode.stop()
-        audioEngine.stop()
+        activeDeck.playerNode.stop()
+        dualDeckAudioEngine.engine.stop()
         levelMeter.reset()
         audioFile = nil
         elapsed = 0
@@ -629,7 +668,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
            let firstUnplayed = setlist.entries.first(where: { $0.state != .played }),
            firstUnplayed.id != id {
             setlist.markQueued(id: id)
-            playerNode.stop()
+            activeDeck.playerNode.stop()
             audioFile = nil
             seekOffset = 0
             elapsed = 0
@@ -646,12 +685,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             }
             guard let entry else { return }
             loadEntry(entry)
-            playerNode.play()
+            activeDeck.playerNode.play()
             isActivePlaying = true
         } else if let id = currentEntryID {
             setlist.markPlaying(id: id)
             seekTo(0) { [weak self] in
-                self?.playerNode.play()
+                self?.activeDeck.playerNode.play()
                 self?.isActivePlaying = true
             }
         }
@@ -661,7 +700,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     func pause() {
         cancelPendingAutoGapBuffer()
         scheduleGeneration += 1
-        playerNode.stop()
+        activeDeck.playerNode.stop()
         isActivePlaying = false
         if let id = currentEntryID, !earlyMarkedEntryIDs.contains(id), !currentEntryIsPlayed() {
             setlist.markPaused(id: id)
@@ -699,7 +738,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         isCurrentEntryMarkedAsPlayed = false
         isActivePlaying = false
         replayGainStatus = ""
-        playerNode.stop()
+        activeDeck.playerNode.stop()
         audioFile = nil
         elapsed = 0
         duration = 0
@@ -721,14 +760,14 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         if id == setlist.stopAfterEntryID { setlist.stopAfterEntryID = nil }
         if !shouldStop, let next = setlist.firstUnplayed(after: id) {
             loadEntry(next)
-            playerNode.play()
+            activeDeck.playerNode.play()
             isActivePlaying = true
             reportCurrentState()
         } else {
             currentEntryID = nil
             isActivePlaying = false
             replayGainStatus = ""
-            playerNode.stop()
+            activeDeck.playerNode.stop()
             audioFile = nil
             elapsed = 0
             duration = 0
@@ -748,14 +787,14 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         if id == setlist.stopAfterEntryID { setlist.stopAfterEntryID = nil }
         if !shouldStop, let next = setlist.firstUnplayed(after: id) {
             loadEntry(next, bypassAutoGap: true)
-            playerNode.play()
+            activeDeck.playerNode.play()
             isActivePlaying = true
             reportCurrentState()
         } else {
             currentEntryID = nil
             isActivePlaying = false
             replayGainStatus = ""
-            playerNode.stop()
+            activeDeck.playerNode.stop()
             audioFile = nil
             elapsed = 0
             duration = 0
@@ -775,7 +814,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         if let prev = setlist.entry(before: id) {
             let wasPlaying = isActivePlaying
             loadEntry(prev)
-            if wasPlaying { playerNode.play(); isActivePlaying = true; reportCurrentState() }
+            if wasPlaying { activeDeck.playerNode.play(); isActivePlaying = true; reportCurrentState() }
         } else {
             seek(to: 0)
         }
@@ -789,7 +828,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
 
     func jumpTo(_ entry: SetlistEntry) {
         loadEntry(entry)
-        playerNode.play()
+        activeDeck.playerNode.play()
         isActivePlaying = true
         reportCurrentState()
     }
@@ -808,8 +847,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         let totalFrames = file.length
         guard startFrame < totalFrames else { completion?(); return }
         let frameCount = AVAudioFrameCount(totalFrames - startFrame)
-        let wasPlaying = playerNode.isPlaying
-        playerNode.stop()
+        let wasPlaying = activeDeck.playerNode.isPlaying
+        activeDeck.playerNode.stop()
         seekOffset = seconds
         elapsed = seconds
         currentPaddingFrames = 0
@@ -817,11 +856,11 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         audioStartSampleTime = 0
         scheduleGeneration += 1
         let gen = scheduleGeneration
-        playerNode.scheduleSegment(file, startingFrame: startFrame, frameCount: frameCount,
+        activeDeck.playerNode.scheduleSegment(file, startingFrame: startFrame, frameCount: frameCount,
                                    at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async { self?.handleTrackEnd(generation: gen) }
         }
-        if wasPlaying { playerNode.play() }
+        if wasPlaying { activeDeck.playerNode.play() }
         completion?()
     }
 
@@ -831,12 +870,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         cancelAutoGapPreparation()
         earlyMarkedEntryIDs.remove(entry.id)
         isCurrentEntryMarkedAsPlayed = false
-        playerNode.stop()
+        activeDeck.playerNode.stop()
         scheduleGeneration += 1
         let gen = scheduleGeneration
-        autoGapQueuedForGeneration = nil
+        committedTransitionGeneration = nil
+        cancelDegradedWaiting()
         noGapPreparedForGeneration = bypassAutoGap ? gen : nil
-        pendingAutoGapIdentity = nil
         do {
             let file = try AVAudioFile(forReading: entry.fileURL)
             audioFile = file
@@ -844,11 +883,21 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             elapsed = 0
             duration = Double(file.length) / file.fileFormat.sampleRate
             // scheduleFile requires the file format to exactly match the output bus format.
-            // Stop the engine before reconnecting so the graph is in a clean state; a mono
-            // AIFF scheduled against the stereo-defaulted startup connection produces silence.
-            audioEngine.stop()
-            connectAudioGraph(format: file.processingFormat)
-            try audioEngine.start()
+            // `PlaybackDeck.prepare()` (Tasks 2/4) already reconnects a deck's internal chain
+            // edges without stopping the shared engine — only the legacy/output-device-rebuild
+            // paths stop it. Follow the same pattern here: reconnect only `activeDeck`'s
+            // internal chain (its own nodes plus the legacy plugin-editor splice), never the
+            // shared `commonMixer`/`balanceMixer` output path, and never stop the engine.
+            //
+            // Manual loads (play/jumpTo/skipPrevious/skipNext's no-next-entry fallback) still
+            // run this synchronous open-and-schedule path against `activeDeck` rather than the
+            // async `PlaybackDeck.prepare()`/standby machinery — Task 6 will generalize manual
+            // transport to dual-deck-aware promote-without-gap semantics. For now this is the
+            // minimal correct behavior: it only ever touches the currently active deck, same as
+            // the legacy single-deck path did.
+            try activeDeck.connectForManualLoad(format: file.processingFormat)
+            reconnectLegacyPluginChain(format: file.processingFormat)
+            try dualDeckAudioEngine.startIfNeeded()
             levelMeter.reinstallTap()
             applyReplayGain(for: entry)
 
@@ -878,7 +927,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                             currentPaddingFrames = frames
                             silencePending = true
                             initialAutoGapApplied = true
-                            playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                            activeDeck.playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                                 DispatchQueue.main.async {
                                     guard let self, self.scheduleGeneration == gen else { return }
                                     self.currentPaddingFrames = 0
@@ -893,7 +942,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             setlist.setAutoGapApplied(id: entry.id, applied: initialAutoGapApplied)
             setlist.setAutoGapSkipped(id: entry.id, skipped: autoGapSkipped)
 
-            playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            activeDeck.playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 DispatchQueue.main.async { self?.handleTrackEnd(generation: gen) }
             }
 
@@ -905,31 +954,23 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         currentEntryID = entry.id
         prepareAutoGap(current: entry)
         setlist.markPlaying(id: entry.id)
-        let resolvedConfigID = entry.pluginConfigurationID ?? configStore.defaultConfigurationID
-        if let configID = resolvedConfigID, let config = configStore.configuration(id: configID) {
-            if preConfigSnapshot == nil {
-                preConfigSnapshot = PreConfigSnapshot(
-                    chainEnabled: settings.audioUnitPluginEnabled,
-                    chainBypassed: settings.audioUnitPluginBypassed,
-                    slotStates: captureChainConfiguration()
-                )
-            }
-            if !settings.audioUnitPluginEnabled { enableAudioUnitPlugin() }
-            applyChainConfiguration(config)
-        } else if let snapshot = preConfigSnapshot {
-            restorePreConfigSnapshot(snapshot)
-            preConfigSnapshot = nil
-        }
+        applyPerTrackPluginConfiguration(for: entry)
         reportCurrentState()
         reportPlaylist()
         onNextTrackUpdate?(setlist.entry(after: entry.id)?.track)
     }
 
+    /// Fires when `activeDeck`'s scheduled file finishes playing back. Under the
+    /// dual-deck design this should normally never be reached for an automatic
+    /// transition — `commitAndRenderTransition` anchors B's start before A's
+    /// audible end, so the handoff already happened. This remains as the
+    /// degraded-waiting fallback's last resort and the "no automatic transition
+    /// applies" path (manual stop-after / ignored / disabled gap).
     private func handleTrackEnd(generation: Int) {
         guard generation == scheduleGeneration,
               let currentID = currentEntryID,
               let current = setlist.entries.first(where: { $0.id == currentID }) else { return }
-        if autoGapQueuedForGeneration == generation { return }
+        if degradedWaitingForGeneration == generation { return }
         let stopForPerformance = current.isPerformance && settings.stopAfterEachPerformanceTrack
         guard currentID != setlist.stopAfterEntryID, !stopForPerformance,
               let next = setlist.firstUnplayed(after: currentID) else {
@@ -940,9 +981,19 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             skipNextImmediate()
             return
         }
-        // Analysis did not finish before the audible end. Conservatively append the
-        // full target now; this path may include main-queue scheduling latency.
-        advanceAutomatically(from: current, to: next)
+        guard SmartAutoGapTransitionPolicy.shouldSchedule(
+            enabled: settings.autoGapEnabled, ignored: next.ignoresAutoGap,
+            automatic: true, willStop: false
+        ) else {
+            skipNextImmediate()
+            return
+        }
+        // A's audible end arrived before B became ready and before a transition was
+        // committed (standby preparation was slower than the track, or this is the
+        // very first track after launch). Enter the degraded-waiting fallback: wait
+        // for B, then render the gap with diagnostics marked non-exact instead of
+        // silently losing the gap or stalling forever.
+        enterDegradedWaiting(currentID: currentID, next: next, generation: generation)
     }
 
     private func prepareAutoGap(current: SetlistEntry) {
@@ -1027,10 +1078,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         )
         standbyPreparationToken = token
         let configuration = nextConfigID.flatMap { configStore.configuration(id: $0) }
-        // `LocalPlayerSource` runs on the main thread (the legacy single-deck path
-        // is not actor-isolated), so this access is safe; `PlaybackDeck`/`DualDeckAudioEngine`
-        // are `@MainActor`-isolated ahead of the coordinator migration.
-        let deck = MainActor.assumeIsolated { dualDeckAudioEngine.deck(standbyDeckID) }
+        let deck = dualDeckAudioEngine.deck(standbyDeckID)
 
         standbyPreparationTask = Task { [weak self] in
             guard let self else { return }
@@ -1063,6 +1111,13 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             }
             guard stillValid() else { return }
             _ = self.dualDeckState.markReady(preparationToken)
+            // Silence analysis (in `prepareAutoGap`) and standby readiness (here)
+            // resolve independently and in no particular order. If analysis
+            // already finished while this deck was still preparing, this is the
+            // only place that retries the commit — without it, a transition
+            // would wait for `handleTrackEnd`'s degraded-waiting fallback even
+            // though B was actually ready in time.
+            self.queuePreparedAutoGapIfEligible(currentID: token.currentID, nextID: token.nextID)
         }
     }
 
@@ -1117,9 +1172,14 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         return finalGain
     }
 
+    /// Once silence analysis resolves (or standby readiness changes), attempt the
+    /// sample-accurate commit. This is the primary automatic-transition path —
+    /// it runs well before A's audible end, anchoring B's start to A's decoded
+    /// end frame on the common-output clock. Replaces the legacy
+    /// `scheduleAutoGap` silence-buffer-then-`skipNextImmediate()` mechanism.
     private func queuePreparedAutoGapIfEligible(currentID: UUID, nextID: UUID) {
         let generation = scheduleGeneration
-        guard autoGapQueuedForGeneration != generation,
+        guard committedTransitionGeneration != generation,
               noGapPreparedForGeneration != generation,
               self.currentEntryID == currentID,
               let current = setlist.entries.first(where: { $0.id == currentID }),
@@ -1136,82 +1196,237 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         let padding = preparedAutoGap?.injectedDuration(
             currentID: currentID, nextID: nextID, target: settings.autoGapDuration
         ) ?? settings.autoGapDuration
-        guard padding > 0 else {
-            noGapPreparedForGeneration = generation
-            return
-        }
-        scheduleAutoGap(seconds: padding, currentEntryID: currentID, nextEntryID: nextID, generation: generation)
+        attemptCommitTransition(currentID: currentID, next: next, injectedSeconds: padding, generation: generation)
     }
 
-    private func advanceAutomatically(from current: SetlistEntry, to next: SetlistEntry) {
-        let padding: Double
-        if !settings.autoGapEnabled || next.ignoresAutoGap {
-            padding = 0
-        } else {
-            padding = preparedAutoGap?.injectedDuration(
-                currentID: current.id, nextID: next.id, target: settings.autoGapDuration
-            ) ?? settings.autoGapDuration
-        }
-        guard padding > 0 else { skipNextImmediate(); return }
-        scheduleAutoGap(seconds: padding, currentEntryID: current.id, nextEntryID: next.id, generation: scheduleGeneration)
-    }
+    /// Computes the frame-domain `DualDeckSchedule`, anchors A's cut and B's
+    /// start to it via `renderTransition`, and atomically promotes UI/setlist
+    /// state. No-op (returns without side effects) when the standby deck isn't
+    /// `.ready` yet, the identity is stale, or the gap-only settings revision
+    /// advanced past what standby preparation captured — those cases fall
+    /// through to `handleTrackEnd`'s degraded-waiting path when A's audible end
+    /// actually arrives.
+    ///
+    /// Everything expensive (file open, ReplayGain, plugin instantiation) has
+    /// already happened in `prepareStandbyIfNeeded` (Task 4). The one
+    /// documented exception is the legacy plugin-editor chain's connection
+    /// point, which `reconnectLegacyPluginChainAfterPromotion()` moves at the
+    /// promotion instant — see that method's doc comment.
+    @discardableResult
+    private func attemptCommitTransition(
+        currentID: UUID, next: SetlistEntry, injectedSeconds: Double, generation: Int
+    ) -> Bool {
+        let outgoing = dualDeckState.activeDeck ?? .a
+        guard committedTransitionGeneration != generation,
+              let file = audioFile,
+              let nodeTime = activeDeck.playerNode.lastRenderTime, nodeTime.isSampleTimeValid,
+              let playerTime = activeDeck.playerNode.playerTime(forNodeTime: nodeTime)
+        else { return false }
+        let incoming = outgoing.other
+        let incomingPhase = dualDeckState[incoming].phase
+        let sampleRate = dualDeckAudioEngine.commonSampleRate
+        guard sampleRate.isFinite, sampleRate > 0 else { return false }
 
-    private func scheduleAutoGap(seconds: Double, currentEntryID: UUID, nextEntryID: UUID, generation: Int) {
-        guard autoGapQueuedForGeneration != generation else { return }
-        guard let format = audioFile?.processingFormat else { skipNextImmediate(); return }
-        let frameValue = (seconds * format.sampleRate).rounded()
-        guard frameValue.isFinite, frameValue > 0, frameValue <= Double(UInt32.max) else {
-            skipNextImmediate(); return
-        }
-        let frames = AVAudioFrameCount(frameValue)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
-            skipNextImmediate(); return
-        }
-        buffer.frameLength = frames
-        currentPaddingFrames = frames
-        silencePending = true
-        autoGapQueuedForGeneration = generation
-        pendingAutoGapIdentity = PendingAutoGapIdentity(
-            currentID: currentEntryID, nextID: nextEntryID, generation: generation
+        let transition = dualDeckState.commitTransition(
+            currentID: currentID, nextID: next.id, settingsRevision: settingsRevision
         )
-        setlist.setAutoGapApplied(id: nextEntryID, applied: true)
-        playerNode.scheduleBuffer(buffer, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self,
-                      self.scheduleGeneration == generation,
-                      let activeCurrentID = self.currentEntryID,
-                      let pending = self.pendingAutoGapIdentity,
-                      pending.matches(
-                        currentID: activeCurrentID,
-                        nextID: self.setlist.firstUnplayed(after: activeCurrentID)?.id,
-                        generation: generation
-                      ) else { return }
-                self.currentPaddingFrames = 0
-                self.silencePending = false
-                self.setlist.setAutoGapApplied(id: nextEntryID, applied: false)
-                let actualNextID = self.setlist.firstUnplayed(after: currentEntryID)?.id
-                guard actualNextID == nextEntryID else { return }
-                self.pendingAutoGapIdentity = nil
-                self.skipNextImmediate()
+        let remainingFrames = max(0, file.length - playerTime.sampleTime)
+        let decodedEndFrame = playerTime.sampleTime + remainingFrames
+
+        guard let schedule = DualDeckSchedule.commit(
+            transition: transition,
+            currentID: currentID, nextID: next.id,
+            incomingPhase: incomingPhase,
+            liveSettingsRevision: settingsRevision,
+            injectedSeconds: injectedSeconds,
+            decodedEndFrame: decodedEndFrame,
+            sampleRate: sampleRate
+        ) else {
+            // Reject and discard the uncommitted transition snapshot (if any was
+            // created above); standby remains `.ready`/`.preparing` and is left
+            // for the next attempt (a later silence-analysis resolution, or
+            // `handleTrackEnd`'s degraded-waiting fallback if A's audible end
+            // arrives first). `promote` with a deliberately-stale settingsRevision
+            // is `DualDeckState`'s documented way to discard a committed
+            // transition without disturbing deck phases.
+            if let transition { _ = dualDeckState.promote(transition, settingsRevision: transition.settingsRevision &+ 1) }
+            return false
+        }
+
+        // Bumped before `renderTransition` so the completion handler captures the
+        // generation that will own the promoted deck's `dataPlayedBack` callback —
+        // `completePromotion` below reuses this same value rather than bumping
+        // again, so there is exactly one generation for "the incoming deck is now
+        // current."
+        scheduleGeneration += 1
+        let newGeneration = scheduleGeneration
+        do {
+            try dualDeckAudioEngine.renderTransition(
+                outgoing: outgoing, incoming: incoming,
+                schedule: schedule, outgoingNow: nodeTime, outgoingNowFrame: playerTime.sampleTime,
+                onIncomingPlaybackCompleted: { [weak self] _ in
+                    DispatchQueue.main.async { self?.handleTrackEnd(generation: newGeneration) }
+                }
+            )
+        } catch {
+            os_log(.error, "TangoDisplay: renderTransition failed: %{public}@", error.localizedDescription)
+            return false
+        }
+
+        guard let token = transition, dualDeckState.promote(token, settingsRevision: settingsRevision) != nil else {
+            return false
+        }
+        committedTransitionGeneration = generation
+        completePromotion(to: next, schedule: schedule, generation: newGeneration)
+        return true
+    }
+
+    /// Atomically promotes UI/setlist state right after `renderTransition`
+    /// armed the incoming deck and cut the outgoing one. Discards the outgoing
+    /// deck's plugin tail (already done by `hardCut` inside `renderTransition`),
+    /// resets it, and starts preparing it as the new standby — mirroring what
+    /// `loadEntry` used to do, but with no file open/reconnect/RG/plugin work
+    /// happening here: that was all done ahead of time by Task 4's standby prep.
+    private func completePromotion(to next: SetlistEntry, schedule: DualDeckSchedule, generation: Int) {
+        let outgoingDeck = standbyDeck // After promote(), the old active deck is now standby-side.
+        let outgoingID = currentEntryID
+        noGapPreparedForGeneration = nil
+        cancelDegradedWaiting()
+        setlist.setAutoGapApplied(id: next.id, applied: schedule.injectedFrames > 0)
+
+        if let outgoingID, !earlyMarkedEntryIDs.contains(outgoingID), !currentEntryIsPlayed() {
+            setlist.markPlayed(id: outgoingID)
+        }
+        earlyMarkedEntryIDs.remove(next.id)
+        isCurrentEntryMarkedAsPlayed = false
+        currentEntryID = next.id
+        audioFile = activeDeck.audioFile
+        seekOffset = 0
+        elapsed = 0
+        duration = activeDeck.audioFile.map { Double($0.length) / $0.fileFormat.sampleRate } ?? (next.duration ?? 0)
+        currentPaddingFrames = 0
+        silencePending = false
+        audioStartSampleTime = 0
+        preparedAutoGap = nil
+        autoGapAnalysisTask?.cancel()
+        standbyPreparationToken = nil
+        standbyDeckPreparationToken = nil
+
+        // `renderTransition` already armed and started the incoming deck's
+        // player node (`scheduleStart`/`play(at:)`, with the `dataPlayedBack`
+        // completion routed to `handleTrackEnd(generation:)` for this same
+        // `generation`) — nothing further to schedule here.
+
+        reconnectLegacyPluginChainAfterPromotion()
+        setlist.markPlaying(id: next.id)
+        applyPerTrackPluginConfiguration(for: next)
+        // Cosmetic only: the incoming deck's `replayGainMixer.outputVolume` was
+        // already set correctly during Task 4 standby prep (`calculateStandbyReplayGain`).
+        // This re-applies the identical value and refreshes `replayGainStatus`'s
+        // UI string (which prep doesn't update) — not a post-commitment gain
+        // recalculation, just a label refresh plus a no-op volume write.
+        applyReplayGain(for: next)
+        // KNOWN GAP: `loadEntry` pre-warms loudness analysis one entry ahead
+        // (`preAnalyseIfNeeded`) so auto-mode ReplayGain is cached before that
+        // entry becomes current. This path doesn't, so the entry two tracks
+        // ahead may show a brief "Analysing…" status instead of a cached value
+        // when it becomes current — latency-only, not a correctness or
+        // commitment-invariant issue. Worth adding here in a follow-up.
+        applyOutgoingDeckTailReset(outgoingDeck)
+        reportCurrentState()
+        reportPlaylist()
+        onNextTrackUpdate?(setlist.entry(after: next.id)?.track)
+        prepareAutoGap(current: next)
+    }
+
+    /// Resets the just-demoted deck (discarding its plugin tail — already cut
+    /// by `renderTransition`'s `hardCut`) so it's a clean, reusable standby
+    /// candidate. `prepareStandbyIfNeeded` (called from `prepareAutoGap` above)
+    /// will prepare it with the entry after `next`.
+    private func applyOutgoingDeckTailReset(_ deck: PlaybackDeck) {
+        do {
+            try deck.resetForReuse()
+        } catch {
+            os_log(.error, "TangoDisplay: outgoing deck reset failed: %{public}@", error.localizedDescription)
+        }
+    }
+
+    /// Late-B fallback: A's audible end arrived before a transition committed.
+    /// Enters an explicit waiting state (no audio plays — this is the
+    /// "deliberate gap" the user would have heard anyway, just rendered after
+    /// the fact instead of pre-anchored) and renders the transition the moment
+    /// B becomes ready.
+    ///
+    /// Diagnostics note: `SetlistEntry`/`SetlistManager` currently has no
+    /// "exact vs. degraded gap" field — only `autoGapApplied`/`autoGapSkipped`.
+    /// This path is, by definition, the non-exact case (the legacy
+    /// silence-buffer fallback's equivalent), but there is nowhere to record
+    /// that distinctly today. Flagged here for a future diagnostics field
+    /// rather than added speculatively.
+    private func enterDegradedWaiting(currentID: UUID, next: SetlistEntry, generation: Int) {
+        guard degradedWaitingForGeneration != generation else { return }
+        degradedWaitingTask?.cancel()
+        degradedWaitingForGeneration = generation
+        setlist.setAutoGapApplied(id: next.id, applied: true)
+        let nextID = next.id
+        degradedWaitingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard self.degradedWaitingForGeneration == generation,
+                      self.currentEntryID == currentID,
+                      self.setlist.firstUnplayed(after: currentID)?.id == nextID else { return }
+                if self.dualDeckState[self.standbyDeck.id].phase == .ready
+                    || self.dualDeckState[self.standbyDeck.id].phase == .scheduled {
+                    let padding = self.preparedAutoGap?.injectedDuration(
+                        currentID: currentID, nextID: nextID, target: self.settings.autoGapDuration
+                    ) ?? self.settings.autoGapDuration
+                    let committed = self.attemptCommitTransition(
+                        currentID: currentID, next: next, injectedSeconds: padding, generation: generation
+                    )
+                    if committed {
+                        self.degradedWaitingForGeneration = nil
+                    } else {
+                        // Standby flipped to ready but commit still failed (e.g. a
+                        // settings-revision race) — fall back to the immediate
+                        // advance rather than waiting forever.
+                        self.degradedWaitingForGeneration = nil
+                        self.skipNextImmediate()
+                    }
+                    return
+                }
+                if self.dualDeckState[self.standbyDeck.id].phase == .failed {
+                    self.degradedWaitingForGeneration = nil
+                    self.skipNextImmediate()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(20))
             }
         }
-        if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    private func cancelDegradedWaiting() {
+        degradedWaitingTask?.cancel()
+        degradedWaitingTask = nil
+        degradedWaitingForGeneration = nil
     }
 
     private func cancelPendingAutoGapBuffer() {
         if silencePending {
-            if let nextID = preparedAutoGap?.nextID {
-                setlist.setAutoGapApplied(id: nextID, applied: false)
-            }
             if let currentEntryID {
                 setlist.setAutoGapApplied(id: currentEntryID, applied: false)
             }
         }
+        // A degraded wait or an already-committed-but-not-yet-promoted gap may
+        // have marked the *next* entry's gap as applied; clear it the same way
+        // the legacy silence-buffer cancellation did.
+        if degradedWaitingForGeneration != nil, let nextID = preparedAutoGap?.nextID {
+            setlist.setAutoGapApplied(id: nextID, applied: false)
+        }
         currentPaddingFrames = 0
         silencePending = false
-        pendingAutoGapIdentity = nil
-        autoGapQueuedForGeneration = nil
         noGapPreparedForGeneration = nil
+        committedTransitionGeneration = nil
+        cancelDegradedWaiting()
     }
 
     private func cancelAutoGapPreparation() {
@@ -1267,6 +1482,29 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
     }
 
+    /// Switches the legacy plugin-editor chain's per-slot state to the entry's
+    /// assigned configuration (or restores the pre-configuration snapshot when
+    /// none is assigned). Shared by `loadEntry` (manual transport) and
+    /// `completePromotion` (automatic dual-deck transition) — this chain's
+    /// lifecycle is independent of which deck happens to be audible.
+    private func applyPerTrackPluginConfiguration(for entry: SetlistEntry) {
+        let resolvedConfigID = entry.pluginConfigurationID ?? configStore.defaultConfigurationID
+        if let configID = resolvedConfigID, let config = configStore.configuration(id: configID) {
+            if preConfigSnapshot == nil {
+                preConfigSnapshot = PreConfigSnapshot(
+                    chainEnabled: settings.audioUnitPluginEnabled,
+                    chainBypassed: settings.audioUnitPluginBypassed,
+                    slotStates: captureChainConfiguration()
+                )
+            }
+            if !settings.audioUnitPluginEnabled { enableAudioUnitPlugin() }
+            applyChainConfiguration(config)
+        } else if let snapshot = preConfigSnapshot {
+            restorePreConfigSnapshot(snapshot)
+            preConfigSnapshot = nil
+        }
+    }
+
     private func restorePreConfigSnapshot(_ snapshot: PreConfigSnapshot) {
         for slotState in snapshot.slotStates {
             guard let runtime = slotRuntimes[slotState.slotID],
@@ -1294,19 +1532,33 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         }
     }
 
-    private func connectAudioGraph(format: AVAudioFormat?) {
-        audioEngine.disconnectNodeOutput(playerNode)
-        audioEngine.disconnectNodeOutput(eq)
-        audioEngine.disconnectNodeOutput(replayGainMixer)
+    /// Splices the legacy, session-long-lived plugin-editor chain
+    /// (`slotRuntimes`) between `activeDeck.pluginChainTail` (this deck's own
+    /// `replayGainMixer`, or the end of its `prepare()`-instantiated plugins)
+    /// and `activeDeck.outputMixer`.
+    ///
+    /// Task 5 decision (Option C): this chain deliberately keeps its existing
+    /// one-AU-instance-per-session lifecycle (`slotRuntimes`/`PluginWindowViewController`,
+    /// reconfigured via `fullState`/presets per track) rather than being unified
+    /// with `PlaybackDeck.pluginRuntimes`'s prepare-time instantiation. It is
+    /// re-targeted at whichever deck is currently active. Only `activeDeck`'s own
+    /// nodes are touched — never the shared `commonMixer`/`balanceMixer` output
+    /// path, and never `engine.stop()`.
+    ///
+    /// KNOWN LIMITATION: at promotion, this chain's connection points must move
+    /// from the outgoing deck to the incoming deck — see `reconnectLegacyPluginChainAfterPromotion()`,
+    /// called from the transition path. That reconnect happens at the promotion
+    /// instant, not ahead of commitment, which is a real exception to "everything
+    /// expensive happens before commitment" for this one chain. The deck's own
+    /// `pluginRuntimes` (Task 4's standby-prepared plugins) are unaffected and
+    /// remain fully pre-attached.
+    private func reconnectLegacyPluginChain(format: AVAudioFormat?) {
+        let deck = activeDeck
         for runtime in slotRuntimes.values {
             if let unit = runtime.avUnit {
-                audioEngine.disconnectNodeOutput(unit)
+                dualDeckAudioEngine.engine.disconnectNodeOutput(unit)
             }
         }
-        audioEngine.disconnectNodeOutput(balanceMixer)
-
-        audioEngine.connect(playerNode, to: eq, format: format)
-        audioEngine.connect(eq, to: replayGainMixer, format: format)
 
         // AU plugins often don't support mono. Upmix to stereo here so replayGainMixer
         // (AVAudioMixerNode) does the channel conversion before the plugin chain sees any data.
@@ -1315,7 +1567,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             return AVAudioFormat(standardFormatWithSampleRate: fmt.sampleRate, channels: 2)
         }()
 
-        var prev: AVAudioNode = replayGainMixer
+        var prev: AVAudioNode = deck.pluginChainTail
         var failedSlots: [(id: UUID, reason: String)] = []
         for (slot, unit) in liveChainUnits() {
             if let fmt = pluginFormat {
@@ -1329,7 +1581,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                 }
             }
             var connectReason: NSString?
-            if TDTryAudioEngineConnect(audioEngine, prev, unit, pluginFormat, &connectReason) {
+            if TDTryAudioEngineConnect(dualDeckAudioEngine.engine, prev, unit, pluginFormat, &connectReason) {
                 prev = unit
             } else {
                 let msg = (connectReason as String?) ?? "NSException during connect"
@@ -1341,8 +1593,20 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         for (id, reason) in failedSlots {
             markSlotFailed(id: id, reason: reason)
         }
-        audioEngine.connect(prev, to: balanceMixer, format: pluginFormat)
-        audioEngine.connect(balanceMixer, to: audioEngine.mainMixerNode, format: pluginFormat)
+        do {
+            try deck.pointOutputMixer(at: prev, format: pluginFormat)
+        } catch {
+            os_log(.error, "TangoDisplay: failed to point %{public}@'s output mixer at the plugin chain: %{public}@",
+                   String(describing: deck.id), error.localizedDescription)
+        }
+    }
+
+    /// Moves the legacy plugin-editor chain's connection point from the
+    /// outgoing deck to the newly-promoted incoming deck. Called once, right
+    /// after `DualDeckState.promote` flips `activeDeck` — see the known
+    /// limitation noted on `reconnectLegacyPluginChain`.
+    private func reconnectLegacyPluginChainAfterPromotion() {
+        reconnectLegacyPluginChain(format: audioFile?.processingFormat)
     }
 
     private func rewireGraphSafely() {
@@ -1350,38 +1614,42 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         let savedElapsed = elapsed
         let format = audioFile?.processingFormat
 
-        playerNode.stop()
-        audioEngine.stop()
-        connectAudioGraph(format: format)
+        activeDeck.playerNode.stop()
+        reconnectLegacyPluginChain(format: format)
 
-        // If a plugin in the live chain breaks engine startup (e.g. format incompatibility),
-        // drop slots from the end of the live chain one at a time and retry until it starts
-        // — this preserves the working portion of the chain.
-        while true {
+        // If a plugin in the live chain breaks the deck's internal connection
+        // (e.g. format incompatibility), drop slots from the end of the live
+        // chain one at a time and retry — this preserves the working portion of
+        // the chain. Unlike the legacy single-deck engine, this no longer needs
+        // a full `engine.stop()/start()`: only `activeDeck`'s internal edges and
+        // the legacy chain's splice point are touched.
+        var attempts = liveChainUnits().count + 1
+        while attempts > 0 {
+            if dualDeckAudioEngine.engine.isRunning { break }
             do {
-                try audioEngine.start()
+                try dualDeckAudioEngine.startIfNeeded()
                 break
             } catch {
                 let live = liveChainUnits()
                 guard let last = live.last else {
                     os_log(.error, "TangoDisplay: engine start failed with no live plugins: %{public}@",
                            error.localizedDescription)
-                    try? audioEngine.start()
+                    try? dualDeckAudioEngine.startIfNeeded()
                     break
                 }
                 os_log(.error, "TangoDisplay: engine start failed; disabling slot %{public}@: %{public}@",
                        last.slot.selection.name, error.localizedDescription)
                 markSlotFailed(id: last.slot.id, reason: error.localizedDescription)
-                audioEngine.stop()
-                connectAudioGraph(format: format)
+                reconnectLegacyPluginChain(format: format)
             }
+            attempts -= 1
         }
 
         levelMeter.reinstallTap()
         applyBalance(_balance)
         if audioFile != nil {
             seekTo(savedElapsed)
-            if wasPlaying { playerNode.play() }
+            if wasPlaying { activeDeck.playerNode.play() }
         }
         recomputeChainStatus()
     }
@@ -1392,8 +1660,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         runtime.status = .failed(name, reason: reason)
         slotStatuses[id] = runtime.status
         if let unit = runtime.avUnit {
-            audioEngine.disconnectNodeOutput(unit)
-            audioEngine.detach(unit)
+            dualDeckAudioEngine.engine.disconnectNodeOutput(unit)
+            dualDeckAudioEngine.engine.detach(unit)
         }
         teardownSlotObservers(runtime)
         runtime.avUnit = nil
@@ -1649,7 +1917,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                           runtime.loadGeneration == gen,
                           self.settings.audioUnitPluginChain.contains(where: { $0.id == slotId })
                     else { return }
-                    self.audioEngine.attach(avUnit)
+                    self.dualDeckAudioEngine.engine.attach(avUnit)
                     runtime.avUnit = avUnit
                     runtime.status = .active(selection.name)
                     self.slotStatuses[slotId] = runtime.status
@@ -1745,8 +2013,8 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
         runtime.pluginWindowVC = nil
         teardownSlotObservers(runtime)
         if detachAVUnit, let unit = runtime.avUnit {
-            audioEngine.disconnectNodeOutput(unit)
-            audioEngine.detach(unit)
+            dualDeckAudioEngine.engine.disconnectNodeOutput(unit)
+            dualDeckAudioEngine.engine.detach(unit)
         }
         runtime.avUnit = nil
         runtime.presetManager = nil
@@ -1818,11 +2086,12 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
             }
             .store(in: &cancellables)
 
-        settings.$eqBand0Gain.sink { [weak self] v in self?.eq.bands[0].gain = v }.store(in: &cancellables)
-        settings.$eqBand1Gain.sink { [weak self] v in self?.eq.bands[1].gain = v }.store(in: &cancellables)
-        settings.$eqBand2Gain.sink { [weak self] v in self?.eq.bands[2].gain = v }.store(in: &cancellables)
-        settings.$eqBand3Gain.sink { [weak self] v in self?.eq.bands[3].gain = v }.store(in: &cancellables)
-        settings.$eqBand4Gain.sink { [weak self] v in self?.eq.bands[4].gain = v }.store(in: &cancellables)
+        // Applied to both decks (see `applyEQGains`) so a promotion never reveals a flat EQ.
+        settings.$eqBand0Gain.sink { [weak self] v in self?.setEQBandGain(0, v) }.store(in: &cancellables)
+        settings.$eqBand1Gain.sink { [weak self] v in self?.setEQBandGain(1, v) }.store(in: &cancellables)
+        settings.$eqBand2Gain.sink { [weak self] v in self?.setEQBandGain(2, v) }.store(in: &cancellables)
+        settings.$eqBand3Gain.sink { [weak self] v in self?.setEQBandGain(3, v) }.store(in: &cancellables)
+        settings.$eqBand4Gain.sink { [weak self] v in self?.setEQBandGain(4, v) }.store(in: &cancellables)
 
         settings.$builtInBalance
             .dropFirst()
@@ -1872,7 +2141,7 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
                     self.currentEntryID = nil
                     self.isActivePlaying = false
                     self.replayGainStatus = ""
-                    self.playerNode.stop()
+                    self.activeDeck.playerNode.stop()
                     self.audioFile = nil
                     self.elapsed = 0
                     self.duration = 0
@@ -1969,9 +2238,9 @@ final class LocalPlayerSource: NSObject, ObservableObject, MusicPlayerSource {
     private func updateTime() {
         guard isActivePlaying,
               let file = audioFile,
-              let nodeTime = playerNode.lastRenderTime,
+              let nodeTime = activeDeck.playerNode.lastRenderTime,
               nodeTime.isSampleTimeValid,
-              let playerTime = playerNode.playerTime(forNodeTime: nodeTime) else { return }
+              let playerTime = activeDeck.playerNode.playerTime(forNodeTime: nodeTime) else { return }
 
         guard !silencePending else { elapsed = 0; return }
         let sampleRate = file.fileFormat.sampleRate

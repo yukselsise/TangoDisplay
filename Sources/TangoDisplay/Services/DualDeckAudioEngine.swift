@@ -100,35 +100,57 @@ final class DualDeckAudioEngine {
     }
 
     /// Atomically anchors the outgoing deck's hard cut and the incoming deck's
-    /// start to one `AVAudioTime` on the shared output clock.
+    /// start to one shared wall-clock instant.
     ///
     /// `schedule` is computed and committed *before* this call. No file open,
     /// reconnect, ReplayGain, plugin reconfiguration, or `engine.stop()` happens
     /// here — only player-node scheduling against the already-attached graph, so
     /// the transition stays sample-accurate.
     ///
-    /// `anchorFrame` is the common-output sample time the cut/start frames are
-    /// relative to (typically a small lead ahead of the current render time so
-    /// both decks can be armed before the anchor passes).
+    /// API constraint: `AVAudioPlayerNode.scheduleBuffer(at:)`/`play(at:)` accept
+    /// an `AVAudioTime`, but a sample-time-only `AVAudioTime` (`sampleTime:atRate:`)
+    /// is meaningful only *relative to that same node's own render timeline* —
+    /// each player node tracks sample position independently from its own last
+    /// `play()`/`stop()` cycle, there is no shared engine-wide sample counter
+    /// across nodes. To anchor two *different* nodes (outgoing vs. incoming deck)
+    /// to the same instant, the host clock is the only clock both nodes' render
+    /// callbacks agree on — so `schedule`'s frame offsets are converted to a
+    /// `hostTime`-bearing `AVAudioTime` here, derived from `outgoingNow`
+    /// (`activeDeck.playerNode`'s current `AVAudioTime`, captured by the caller
+    /// at the moment it measured `decodedEndFrame`).
     func renderTransition(
         outgoing: DeckID,
         incoming: DeckID,
         schedule: DualDeckSchedule,
-        anchorSampleTime: AVAudioFramePosition
+        outgoingNow: AVAudioTime,
+        outgoingNowFrame: AVAudioFramePosition,
+        onIncomingPlaybackCompleted: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)? = nil
     ) throws {
         let outgoingDeck = deck(outgoing)
         let incomingDeck = deck(incoming)
         let sampleRate = schedule.sampleRate
 
-        let startTime = AVAudioTime(
-            sampleTime: anchorSampleTime + schedule.startIncomingAtFrame,
-            atRate: sampleRate
-        )
+        let secondsUntilStart = Double(schedule.startIncomingAtFrame - outgoingNowFrame) / sampleRate
+        let startHostTime = outgoingNow.hostTime + AVAudioTime.hostTime(forSeconds: max(0, secondsUntilStart))
+        let startTime = AVAudioTime(hostTime: startHostTime)
+
         // Incoming deck is armed first so it is primed before the cut frame.
-        try incomingDeck.scheduleStart(at: startTime)
+        try incomingDeck.scheduleStart(at: startTime, onPlaybackCompleted: onIncomingPlaybackCompleted)
         incomingDeck.play(at: startTime)
         // Outgoing deck is cut at the anchor's cut frame; its plugin tail is
         // discarded deliberately (hardCut), preserving sample-accurate handoff.
+        //
+        // KNOWN LIMITATION: `hardCut()` stops the outgoing deck immediately
+        // (synchronously, on this call) rather than scheduling its stop for the
+        // same future hostTime as the incoming deck's start. AVAudioPlayerNode
+        // has no host-time-deferred `stop(at:)` API, so a true zero-padding
+        // transition (`injectedFrames == 0`) has a brief window where neither
+        // deck is rendering between this cut and the incoming deck's scheduled
+        // start — in practice sub-buffer-sized and inaudible, but not the same
+        // "exact same render callback" guarantee as the schedule's frame math
+        // implies. A future revisit could keep the outgoing deck playing its
+        // already-decoded tail muted via `outputMixer` ramped at the same
+        // hostTime instead of `hardCut`, if this proves audible.
         outgoingDeck.hardCut()
     }
 
