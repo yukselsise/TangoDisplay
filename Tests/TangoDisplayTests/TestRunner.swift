@@ -6,6 +6,7 @@
 //   test("name") { ... }            — individual test, catches thrown errors
 //   expect(_ condition, file:line:) — assertion; throws on failure
 
+import AVFoundation
 import Foundation
 import TangoDisplayCore
 
@@ -1664,6 +1665,149 @@ func runDualDeckScheduleTests() {
     }
 }
 
+func runDualDeckRenderVerifierTests() {
+    func transition(
+        current: String = "current",
+        next: String = "next"
+    ) -> DualDeckTransition<String> {
+        DualDeckTransition(
+            outgoingDeck: .a, incomingDeck: .b,
+            currentID: current, nextID: next,
+            generation: 1, outgoingGeneration: 1, incomingGeneration: 1,
+            settingsRevision: 0
+        )
+    }
+
+    /// Runs the full pipeline for one sample-rate/channel-count combination:
+    /// measure intrinsic silence from fixtures, derive the injected duration,
+    /// convert to frames via `DualDeckSchedule`, and check the resulting
+    /// schedule's frame arithmetic — all from the same two fixtures.
+    func verifyExactTransition(
+        target: Double,
+        outgoingBody: Double,
+        trailingSilence: Double,
+        incomingBody: Double,
+        leadingSilence: Double,
+        expectedInjected: Double,
+        sampleRate: Double,
+        channelCount: Int
+    ) throws {
+        let outgoing = DualDeckRenderVerifier.outgoingTrailingFixture(
+            bodySeconds: outgoingBody, trailingSilenceSeconds: trailingSilence,
+            sampleRate: sampleRate, channelCount: channelCount
+        )
+        let incoming = DualDeckRenderVerifier.incomingLeadingFixture(
+            leadingSilenceSeconds: leadingSilence, bodySeconds: incomingBody,
+            sampleRate: sampleRate, channelCount: channelCount
+        )
+
+        let measuredTrailing = SmartAutoGap.measureSilence(samples: outgoing.samples, sampleRate: sampleRate).trailing
+        let measuredLeading = SmartAutoGap.measureSilence(samples: incoming.samples, sampleRate: sampleRate).leading
+        try expectEqual(measuredTrailing, trailingSilence)
+        try expectEqual(measuredLeading, leadingSilence)
+
+        let injected = SmartAutoGap.injectedDuration(target: target, trailing: measuredTrailing, leading: measuredLeading)
+        try expectEqual(injected, expectedInjected)
+
+        let decodedEndFrame = AVAudioFramePosition(outgoing.frameCount)
+        let schedule = DualDeckSchedule.commit(
+            transition: transition(), currentID: "current", nextID: "next",
+            incomingPhase: .scheduled, liveSettingsRevision: 0,
+            injectedSeconds: injected, decodedEndFrame: decodedEndFrame, sampleRate: sampleRate
+        )
+        try expectNotNil(schedule)
+        let perceivedGapFrames = AVAudioFramePosition(measuredTrailing * sampleRate) // pre-cut trailing silence already on outgoing
+            + AVAudioFramePosition((schedule?.injectedFrames ?? 0))
+            + AVAudioFramePosition(measuredLeading * sampleRate) // post-start leading silence on incoming
+        let perceivedGapSeconds = Double(perceivedGapFrames) / sampleRate
+        // When intrinsic silence alone meets/exceeds the target, no frames are
+        // injected and the perceived gap is simply the (larger) intrinsic total;
+        // only when injection is actually happening does the perceived gap equal
+        // the requested target exactly.
+        let expectedPerceivedGap = max(target, measuredTrailing + measuredLeading)
+        try expectEqual((perceivedGapSeconds * 1_000).rounded() / 1_000, (expectedPerceivedGap * 1_000).rounded() / 1_000)
+        try expectEqual(schedule?.startIncomingAtFrame, decodedEndFrame + AVAudioFramePosition(schedule?.injectedFrames ?? 0))
+    }
+
+    for (rate, channels) in [(44_100.0, 1), (44_100.0, 2), (48_000.0, 1), (48_000.0, 2)] {
+        suite("DualDeckRenderVerifier — exact transition @ \(Int(rate))Hz x\(channels)ch") {
+            test("5s target with 1s+1s intrinsic silence injects 3s and perceives 5s total gap") {
+                try verifyExactTransition(
+                    target: 5, outgoingBody: 2, trailingSilence: 1,
+                    incomingBody: 2, leadingSilence: 1,
+                    expectedInjected: 3, sampleRate: rate, channelCount: channels
+                )
+            }
+            test("intrinsic silence at or above target injects zero") {
+                try verifyExactTransition(
+                    target: 2, outgoingBody: 1, trailingSilence: 1.5,
+                    incomingBody: 1, leadingSilence: 1.5,
+                    expectedInjected: 0, sampleRate: rate, channelCount: channels
+                )
+            }
+        }
+    }
+
+    suite("DualDeckRenderVerifier — hard cut discards the outgoing tail") {
+        test("samples after cutOutgoingAtFrame are absent post-cut even with a plugin tail present") {
+            let sampleRate = 48_000.0
+            let outgoing = DualDeckRenderVerifier.outgoingTrailingFixture(
+                bodySeconds: 1, trailingSilenceSeconds: 0.5, pluginTailSeconds: 2,
+                sampleRate: sampleRate, channelCount: 2
+            )
+            // The cut lands at end-of-decoded-content, i.e. before the plugin tail
+            // (the tail represents audio a plugin would still emit if not cut).
+            let cutAtFrame = AVAudioFramePosition((1.5 * sampleRate).rounded())
+            try expect(outgoing.frameCount > Int(cutAtFrame), "fixture must include a tail beyond the cut")
+
+            let survivors = DualDeckRenderVerifier.samplesSurvivingCut(outgoing, cutAtFrame: cutAtFrame)
+            try expectEqual(survivors.map(\.count), [Int(cutAtFrame), Int(cutAtFrame)])
+            // The tail itself (everything the cut discards) is audible — proving
+            // the cut actually removed audible content, not just trailing silence.
+            let discarded = outgoing.samples.map { Array($0.suffix(from: Int(cutAtFrame))) }
+            try expect(DualDeckRenderVerifier.containsAudibleSample(discarded, sampleRate: sampleRate))
+            // And the surviving body+silence region has no audible content beyond
+            // its own body — i.e. nothing from the discarded tail leaked in.
+            try expectEqual(survivors[0].suffix(Int(0.5 * sampleRate)), Array(repeating: Float(0), count: Int(0.5 * sampleRate)))
+        }
+    }
+
+    suite("DualDeckRenderVerifier — B must be ready before the gap completes") {
+        test("exact schedule cannot be produced while incoming deck is still preparing") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            _ = state.beginPreparation(deck: .b, entryID: "next") // .preparing, not yet .ready
+            let committed = state.commitTransition(currentID: "current", nextID: "next", settingsRevision: 0)
+            try expectNil(committed) // commitTransition itself requires .ready
+
+            // Even probing DualDeckSchedule.commit directly with the deck's true
+            // (not-yet-ready) phase must refuse to produce an exact plan.
+            let schedule = DualDeckSchedule.commit(
+                transition: transition(), currentID: "current", nextID: "next",
+                incomingPhase: state[.b].phase, liveSettingsRevision: 0,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            )
+            try expectNil(schedule)
+        }
+        test("exact schedule is producible once B is marked ready before the gap elapses") {
+            var state = DualDeckState<String>()
+            state.activate(deck: .a, entryID: "current", generation: 1)
+            guard let token = state.beginPreparation(deck: .b, entryID: "next") else {
+                throw TestFailure(message: "expected a preparation token", file: #file, line: #line)
+            }
+            try expect(state.markReady(token))
+            try expectEqual(state[.b].phase, .ready)
+
+            let schedule = DualDeckSchedule.commit(
+                transition: transition(), currentID: "current", nextID: "next",
+                incomingPhase: state[.b].phase, liveSettingsRevision: 0,
+                injectedSeconds: 3, decodedEndFrame: 1_000, sampleRate: 48_000
+            )
+            try expectNotNil(schedule)
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runCortinaDetectorTests()
@@ -1677,6 +1821,7 @@ runSmartAutoGapTests()
 runDualDeckStateTests()
 runStandbyPreparationTests()
 runDualDeckScheduleTests()
+runDualDeckRenderVerifierTests()
 runTransportPolicyTests()
 
 print("\n════════════════════════════════")
