@@ -1062,6 +1062,32 @@ func runPreparedAutoGapTests() {
     }
 }
 
+// MARK: - WaveformEnvelope tests
+
+func runWaveformEnvelopeTests() {
+    suite("WaveformEnvelope") {
+        test("empty input produces zero-filled buckets") {
+            try expectEqual(WaveformEnvelope.downsamplePeaks([], buckets: 3), [0, 0, 0])
+        }
+        test("non-positive bucket count produces no values") {
+            try expectEqual(WaveformEnvelope.downsamplePeaks([0.5], buckets: 0), [])
+            try expectEqual(WaveformEnvelope.downsamplePeaks([0.5], buckets: -1), [])
+        }
+        test("downsampling preserves the largest absolute peak in each interval") {
+            let result = WaveformEnvelope.downsamplePeaks(
+                [0.1, -0.8, 0.2, 0.4, -0.9, 0.3],
+                buckets: 3
+            )
+            try expectEqual(result, [0.8, 0.4, 0.9])
+        }
+        test("upsampling returns exactly the requested number of values") {
+            let result = WaveformEnvelope.downsamplePeaks([0.25, 0.75], buckets: 5)
+            try expectEqual(result.count, 5)
+            try expectEqual(result, [0.25, 0.25, 0.25, 0.75, 0.75])
+        }
+    }
+}
+
 // MARK: - Main entry point
 
 runPreparedAutoGapTests()
@@ -1072,6 +1098,7 @@ runDisplayStateTests()
 runReplayGainTests()
 runAutoReplayGainTests()
 runAudioUnitPluginTests()
+runWaveformEnvelopeTests()
 
 print("\n════════════════════════════════")
 let icon = totalFailed == 0 ? "✓" : "✗"

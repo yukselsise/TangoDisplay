@@ -1,4 +1,5 @@
 import SwiftUI
+import TangoDisplayCore
 
 struct WaveformWindowContent: View {
     @EnvironmentObject var appState: AppState
@@ -57,10 +58,14 @@ private struct WaveformWindowPlayer: View {
         .task(id: currentFileURL) {
             guard let url = currentFileURL else {
                 waveformData = nil
+                isLoading = false
                 return
             }
+            waveformData = nil
             isLoading = true
-            waveformData = await WaveformLoader.shared.load(url: url)
+            let loadedData = await WaveformLoader.shared.load(url: url)
+            guard !Task.isCancelled, currentFileURL == url else { return }
+            waveformData = loadedData
             isLoading = false
         }
     }
@@ -107,32 +112,70 @@ private struct WaveformBarsView: View {
     let samples: [Float]
     let progress: Double   // 0.0 – 1.0
 
+    @Environment(\.displayScale) private var displayScale
+
     var body: some View {
-        Canvas { context, size in
-            guard !samples.isEmpty else { return }
+        GeometryReader { geometry in
+            let bucketCount = max(1, Int(geometry.size.width * displayScale))
+            let values = WaveformEnvelope.downsamplePeaks(samples, buckets: bucketCount)
+            let clampedProgress = min(max(progress, 0), 1)
 
-            let playheadX = CGFloat(progress) * size.width
-            let barWidth  = size.width / CGFloat(samples.count)
+            Canvas { context, size in
+                guard !values.isEmpty else { return }
+                let middle = size.height / 2
+                let minimumHalfHeight = 1 / displayScale
+                let shape = Self.silhouettePath(
+                    values: values,
+                    size: size,
+                    middle: middle,
+                    minimumHalfHeight: minimumHalfHeight
+                )
 
-            for (i, sample) in samples.enumerated() {
-                let x      = CGFloat(i) * barWidth
-                let height = max(2, CGFloat(sample) * size.height * 0.9)
-                let rect   = CGRect(
-                    x: x,
-                    y: (size.height - height) / 2,
-                    width: max(1, barWidth - 0.5),
-                    height: height
-                )
-                let isPast = (x + barWidth * 0.5) < playheadX
-                context.fill(
-                    Path(rect),
-                    with: .color(isPast ? Color.primary : Color.secondary.opacity(0.45))
-                )
+                context.fill(shape, with: .color(Color.secondary.opacity(0.4)))
+
+                let playedWidth = size.width * clampedProgress
+                context.drawLayer { playedContext in
+                    playedContext.clip(
+                        to: Path(CGRect(x: 0, y: 0, width: playedWidth, height: size.height))
+                    )
+                    playedContext.fill(shape, with: .color(.accentColor))
+                }
+
+                let playhead = CGRect(x: playedWidth - 0.5, y: 0, width: 1, height: size.height)
+                context.fill(Path(playhead), with: .color(.red.opacity(0.8)))
             }
-
-            // Playhead line
-            let lineRect = CGRect(x: playheadX - 0.5, y: 0, width: 1, height: size.height)
-            context.fill(Path(lineRect), with: .color(.red.opacity(0.8)))
         }
+    }
+
+    private static func silhouettePath(
+        values: [Float],
+        size: CGSize,
+        middle: CGFloat,
+        minimumHalfHeight: CGFloat
+    ) -> Path {
+        var path = Path()
+        guard let first = values.first, let last = values.last else { return path }
+        let step = size.width / CGFloat(values.count)
+
+        func halfHeight(for value: Float) -> CGFloat {
+            max(minimumHalfHeight, CGFloat(abs(value)) * middle * 0.9)
+        }
+
+        path.move(to: CGPoint(x: 0, y: middle - halfHeight(for: first)))
+        for (index, value) in values.enumerated() {
+            path.addLine(to: CGPoint(
+                x: CGFloat(index) * step,
+                y: middle - halfHeight(for: value)
+            ))
+        }
+        path.addLine(to: CGPoint(x: size.width, y: middle - halfHeight(for: last)))
+        for (index, value) in values.enumerated().reversed() {
+            path.addLine(to: CGPoint(
+                x: CGFloat(index) * step,
+                y: middle + halfHeight(for: value)
+            ))
+        }
+        path.closeSubpath()
+        return path
     }
 }
